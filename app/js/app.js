@@ -1395,7 +1395,27 @@
 
   /* ================= Démarrage ================= */
 
+  // iOS garde la page d'accueil en cache jusqu'à 10 min après une publication :
+  // on compare le numéro de version publié avec celui en cours et on recharge si besoin.
+  const BUILD = document.querySelector('meta[name="build"]')?.content || "";
+  async function checkUpdate() {
+    if (!BUILD || BUILD.includes("__")) return;
+    try {
+      const res = await fetch(`index.html?check=${Date.now()}`, { cache: "no-store" });
+      const html = await res.text();
+      const live = html.match(/<meta name="build" content="([^"]+)"/)?.[1];
+      if (live && live !== BUILD && !live.includes("__")) {
+        await Store.flush();
+        location.replace(`./?v=${encodeURIComponent(live)}`);
+      }
+    } catch {}
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && !S.sheet) checkUpdate();
+  });
+
   (async function start() {
+    checkUpdate();
     const saved = await Store.get("collection");
     if (saved && saved.cards) S.col = { cards: {}, defaults: {}, binders: [], ...saved };
     if (!Array.isArray(S.col.binders)) S.col.binders = [];
