@@ -106,7 +106,17 @@
   }
   async function loadSearch(game) {
     const c = cat(game);
-    if (!c.search) c.search = fetchJSON(`data/${game}/search.json`).catch(() => []);
+    if (!c.search)
+      c.search = fetchJSON(`data/${game}/search.json`)
+        .then((d) => {
+          if (Array.isArray(d)) return d; // ancien format sans images
+          const base = d.base || "";
+          return (d.rows || []).map((r) => {
+            const img = r[4] || "";
+            return [r[0], r[1], r[2], r[3], img && !/^(https?:|data:)/.test(img) ? base + img : img];
+          });
+        })
+        .catch(() => []);
     return c.search;
   }
 
@@ -316,11 +326,12 @@
       return;
     }
     hitsBox.innerHTML = `<p class="label">Cartes${hits.length >= 60 ? " (60 premiers résultats)" : ""}</p><div class="rows">${hits
-      .map(([id, name, setId, no]) => {
+      .map(([id, name, setId, no, img]) => {
         const e = entry(game, id);
         const qty = ownedQty(e);
+        const pic = e?.img || img;
         return `<button type="button" class="row" data-hit="${esc(id)}" data-hit-set="${esc(setId)}">
-          <span class="thumb">${e?.img ? `<img src="${esc(e.img)}" alt="" loading="lazy">` : ""}</span>
+          <span class="thumb">${pic ? `<img src="${esc(pic)}" alt="" loading="lazy" onerror="this.remove()">` : ""}</span>
           <span class="txt"><span class="t1">${esc(name)}</span><span class="t2">${esc(no)} · ${esc(setsById.get(setId)?.name || setId)}</span></span>
           <span class="end">${qty ? `×${qty}` : e?.wish ? `<span class="prio p${e.wish}">${PRIOS[e.wish]}</span>` : ""}</span>
         </button>`;

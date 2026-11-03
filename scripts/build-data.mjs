@@ -65,10 +65,21 @@ async function writeGame(game, sets) {
   for (const s of sets) {
     await writeJSON(join(dir, "sets", `${s.id}.json`), { id: s.id, name: s.name, cards: s.cards });
     index.push({ id: s.id, name: s.name, code: s.code || "", date: s.date || "", group: s.group || "", count: s.cards.length });
-    for (const c of s.cards) search.push([c.id, c.name, s.id, c.no || ""]);
+    for (const c of s.cards) search.push([c.id, c.name, s.id, c.no || "", c.img || ""]);
   }
+  // Préfixe commun des URL d'images, retiré de chaque ligne pour alléger l'index de recherche.
+  const imgs = search.map((r) => r[4]).filter(Boolean);
+  let base = imgs[0] || "";
+  for (const u of imgs) {
+    let i = 0;
+    while (i < base.length && i < u.length && base[i] === u[i]) i++;
+    base = base.slice(0, i);
+    if (!base) break;
+  }
+  base = base.slice(0, base.lastIndexOf("/") + 1);
+  if (base) for (const r of search) if (r[4].startsWith(base)) r[4] = r[4].slice(base.length);
   await writeJSON(join(dir, "sets.json"), index);
-  await writeJSON(join(dir, "search.json"), search);
+  await writeJSON(join(dir, "search.json"), { base, rows: search });
   return { sets: index.length, cards: search.length };
 }
 
