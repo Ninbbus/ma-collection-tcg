@@ -1307,7 +1307,8 @@
     const game = S.game;
     const wished = gameEntries(game).filter((e) => e.wish > 0);
     view.innerHTML = `
-      <div class="view-head"><h2>Wishlist</h2><span class="spacer"></span>${wished.length ? `<button type="button" class="btn small" id="copy-wish">Copier la liste</button>` : ""}</div>
+      <div class="view-head"><h2>Wishlist</h2></div>
+      ${wished.length ? `<div class="btn-row" style="margin:-4px 0 6px"><button type="button" class="btn primary" id="share-wish">Partager ma wishlist</button><button type="button" class="btn" id="copy-wish">Copier en texte</button></div>` : ""}
       <div id="wish-list"></div>`;
     const box = $("#wish-list");
     if (!wished.length) {
@@ -1325,20 +1326,226 @@
     box.innerHTML = html;
     bindRows();
     $("#copy-wish").onclick = async () => {
-      const lines = [`Wishlist ${GAMES[game].label}`];
-      for (const p of [3, 2, 1]) {
-        const items = wished.filter((e) => e.wish === p);
-        if (!items.length) continue;
-        lines.push("", `${PRIOS[p]} :`);
-        for (const e of items) lines.push(`- ${e.name}${e.no ? ` (${e.no})` : ""}${e.setName ? ` — ${e.setName}` : ""}`);
-      }
       try {
-        await navigator.clipboard.writeText(lines.join("\n"));
+        await navigator.clipboard.writeText(wishText(game, wished));
         toast("Liste copiée");
       } catch {
         toast("Copie impossible sur cet appareil");
       }
     };
+    $("#share-wish").onclick = (ev) => shareWishlist(game, wished, ev.currentTarget);
+  }
+
+  function wishText(game, wished) {
+    const lines = [`🃏 Ma wishlist ${GAMES[game].label}`];
+    for (const p of [3, 2, 1]) {
+      const items = wished.filter((e) => e.wish === p);
+      if (!items.length) continue;
+      lines.push("", `${p === 3 ? "🔥" : p === 2 ? "⭐" : "•"} ${PRIOS[p]} :`);
+      for (const e of items) lines.push(`- ${e.name}${e.no ? ` (${e.no})` : ""}${e.setName ? ` — ${e.setName}` : ""}`);
+    }
+    return lines.join("\n");
+  }
+
+  /* ---------- Image de wishlist à partager ---------- */
+
+  // Les images doivent autoriser le partage entre sites pour être dessinées dans l'image :
+  // on passe par un proxy d'images public (wsrv.nl), sinon l'URL directe, sinon une case avec le nom.
+  function loadImage(src) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      const t = setTimeout(() => resolve(null), 9000);
+      img.onload = () => {
+        clearTimeout(t);
+        resolve(img);
+      };
+      img.onerror = () => {
+        clearTimeout(t);
+        resolve(null);
+      };
+      img.src = src;
+    });
+  }
+  async function cardImage(url) {
+    if (!url) return null;
+    if (url.startsWith("data:")) return loadImage(url);
+    const proxied = `https://wsrv.nl/?url=${encodeURIComponent(url)}&w=300&h=420&fit=cover&output=jpg&q=82`;
+    return (await loadImage(proxied)) || (await loadImage(url));
+  }
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+  function fitText(ctx, text, max) {
+    if (ctx.measureText(text).width <= max) return text;
+    let t = text;
+    while (t.length > 1 && ctx.measureText(t + "…").width > max) t = t.slice(0, -1);
+    return t + "…";
+  }
+
+  async function wishImage(game, wished) {
+    const MAX = 60;
+    const W = 1080, PAD = 48, COLS = 5, GAP = 20;
+    const cw = (W - PAD * 2 - GAP * (COLS - 1)) / COLS;
+    const ch = cw * (88 / 63);
+    const rowH = ch + 64;
+    const accent = { riftbound: "#d9b45a", yugioh: "#a985f0", pokemon: "#ff6a55" }[game];
+    const groups = [3, 2, 1]
+      .map((p) => ({ p, items: wished.filter((e) => e.wish === p).sort((a, b) => a.setName.localeCompare(b.setName) || String(a.no).localeCompare(String(b.no), "en", { numeric: true })) }))
+      .filter((g) => g.items.length);
+    let left = MAX;
+    for (const g of groups) {
+      g.shown = g.items.slice(0, Math.max(0, left));
+      left -= g.shown.length;
+    }
+    const hidden = wished.length - groups.reduce((n, g) => n + g.shown.length, 0);
+    let H = PAD + 120;
+    for (const g of groups) if (g.shown.length) H += 70 + Math.ceil(g.shown.length / COLS) * rowH;
+    H += hidden ? 70 : 0;
+    H += 60;
+
+    const imgs = new Map();
+    const all = groups.flatMap((g) => g.shown);
+    await Promise.all(all.map(async (e) => imgs.set(e, await cardImage(e.img))));
+    try { await document.fonts.ready; } catch {}
+
+    const c = document.createElement("canvas");
+    c.width = W;
+    c.height = H;
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#11141b";
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = accent;
+    ctx.fillRect(0, 0, 12, H);
+
+    const display = '"Chakra Petch", "Avenir Next Condensed", system-ui, sans-serif';
+    const body = '"Figtree", -apple-system, system-ui, sans-serif';
+    let y = PAD;
+    ctx.fillStyle = accent;
+    ctx.font = `700 26px ${display}`;
+    ctx.fillText(GAMES[game].label.toUpperCase(), PAD, y + 26);
+    ctx.fillStyle = "#ebedf3";
+    ctx.font = `700 54px ${display}`;
+    ctx.fillText("Ma wishlist", PAD, y + 86);
+    ctx.fillStyle = "#9aa1b3";
+    ctx.font = `500 24px ${body}`;
+    const sub = `${wished.length} carte${wished.length > 1 ? "s" : ""} recherchée${wished.length > 1 ? "s" : ""} · ${new Date().toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}`;
+    ctx.textAlign = "right";
+    ctx.fillText(sub, W - PAD, y + 84);
+    ctx.textAlign = "left";
+    y += 120;
+
+    const prioColor = { 3: "#ff6f61", 2: accent, 1: "#9aa1b3" };
+    for (const g of groups) {
+      if (!g.shown.length) continue;
+      y += 20;
+      ctx.fillStyle = prioColor[g.p];
+      roundRect(ctx, PAD, y, 14, 30, 4);
+      ctx.fill();
+      ctx.fillStyle = "#ebedf3";
+      ctx.font = `700 30px ${display}`;
+      ctx.fillText(`Priorité ${PRIOS[g.p].toLowerCase()}`, PAD + 28, y + 26);
+      ctx.fillStyle = "#9aa1b3";
+      ctx.font = `500 24px ${body}`;
+      ctx.fillText(`${g.items.length}`, PAD + 28 + ctx.measureText(`Priorité ${PRIOS[g.p].toLowerCase()}`).width * 1.25 + 14, y + 26);
+      y += 50;
+      g.shown.forEach((e, i) => {
+        const x = PAD + (i % COLS) * (cw + GAP);
+        const yy = y + Math.floor(i / COLS) * rowH;
+        ctx.save();
+        roundRect(ctx, x, yy, cw, ch, 10);
+        ctx.clip();
+        ctx.fillStyle = "#232837";
+        ctx.fillRect(x, yy, cw, ch);
+        const im = imgs.get(e);
+        if (im) {
+          const r = Math.max(cw / im.width, ch / im.height);
+          const dw = im.width * r, dh = im.height * r;
+          ctx.drawImage(im, x + (cw - dw) / 2, yy, dw, dh);
+        } else {
+          ctx.fillStyle = "#9aa1b3";
+          ctx.font = `600 20px ${body}`;
+          ctx.textAlign = "center";
+          const words = e.name.split(/\s+/);
+          let line = "", ly = yy + ch / 2 - 20;
+          for (const w of words) {
+            if (ctx.measureText(line + " " + w).width > cw - 20 && line) {
+              ctx.fillText(line, x + cw / 2, ly);
+              line = w;
+              ly += 26;
+            } else line = line ? line + " " + w : w;
+          }
+          ctx.fillText(line, x + cw / 2, ly);
+          ctx.textAlign = "left";
+        }
+        ctx.restore();
+        ctx.fillStyle = "#ebedf3";
+        ctx.font = `600 20px ${body}`;
+        ctx.fillText(fitText(ctx, e.name, cw), x, yy + ch + 28);
+        ctx.fillStyle = "#9aa1b3";
+        ctx.font = `500 17px ${body}`;
+        ctx.fillText(fitText(ctx, [e.no, rarityOf(e)].filter(Boolean).join(" · "), cw), x, yy + ch + 52);
+      });
+      y += Math.ceil(g.shown.length / COLS) * rowH;
+    }
+    if (hidden) {
+      y += 30;
+      ctx.fillStyle = "#9aa1b3";
+      ctx.font = `600 26px ${body}`;
+      ctx.fillText(`+ ${hidden} autre${hidden > 1 ? "s" : ""} carte${hidden > 1 ? "s" : ""} (liste complète en texte)`, PAD, y + 20);
+      y += 40;
+    }
+    ctx.fillStyle = "#5d6475";
+    ctx.font = `500 20px ${body}`;
+    ctx.textAlign = "right";
+    ctx.fillText("Classeur TCG", W - PAD, H - 26);
+    return new Promise((res) => c.toBlob(res, "image/png"));
+  }
+
+  let sharing = false;
+  async function shareWishlist(game, wished, btn) {
+    if (sharing) return;
+    sharing = true;
+    const label = btn.textContent;
+    btn.textContent = "Préparation de l'image…";
+    btn.disabled = true;
+    const text = wishText(game, wished);
+    try {
+      let blob = null;
+      try {
+        blob = await wishImage(game, wished);
+      } catch (e) {
+        console.error(e);
+      }
+      const file = blob && new File([blob], `wishlist-${game}.png`, { type: "image/png" });
+      if (file && navigator.canShare?.({ files: [file] })) {
+        await navigator.share({ files: [file], text, title: `Ma wishlist ${GAMES[game].label}` });
+      } else if (navigator.share) {
+        await navigator.share({ text, title: `Ma wishlist ${GAMES[game].label}` });
+      } else if (blob) {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `wishlist-${game}.png`;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+      } else {
+        await navigator.clipboard.writeText(text);
+        toast("Partage indisponible : liste copiée en texte");
+      }
+    } catch (e) {
+      if (e?.name !== "AbortError") toast("Partage impossible, essaie « Copier en texte »");
+    } finally {
+      sharing = false;
+      btn.textContent = label;
+      btn.disabled = false;
+    }
   }
 
   /* ================= Onglet Réglages ================= */
