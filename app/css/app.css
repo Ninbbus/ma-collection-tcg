@@ -16,6 +16,9 @@
   --font-body: "Figtree", -apple-system, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", monospace;
   --radius: 10px;
+  --page-bg: #262b38;
+  --pocket: rgb(255 255 255 / 0.06);
+  --pocket-line: rgb(255 255 255 / 0.14);
   --tabbar-h: 58px;
   color-scheme: light;
 }
@@ -33,6 +36,9 @@
     --owned: #3cc184;
     --wish: #ff6f61;
     --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px rgb(0 0 0 / 0.35);
+    --page-bg: #07080c;
+    --pocket: rgb(255 255 255 / 0.05);
+    --pocket-line: rgb(255 255 255 / 0.11);
     color-scheme: dark;
   }
 }
@@ -335,7 +341,7 @@ img { max-width: 100%; display: block; }
   left: 0; right: 0; bottom: 0;
   z-index: 20;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   background: color-mix(in srgb, var(--surface) 92%, transparent);
   backdrop-filter: saturate(1.4) blur(14px);
   -webkit-backdrop-filter: saturate(1.4) blur(14px);
@@ -470,3 +476,73 @@ img { max-width: 100%; display: block; }
 .row .t1, .row .t2 { display: block; }
 .games button { white-space: nowrap; }
 @media (max-width: 380px) { .games button { padding: 6px 8px; font-size: 12px; } .brand { font-size: 16px; } }
+
+/* ---------- Classeurs (vitrine) ---------- */
+.binder-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (min-width: 600px) { .binder-list { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.binder-tile {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 10px;
+  min-width: 0;
+}
+.binder-tile .cover {
+  display: block;
+  aspect-ratio: 4 / 3;
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--page-bg);
+  box-shadow: inset 6px 0 0 color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.binder-tile .cover img { width: 100%; height: 100%; object-fit: cover; object-position: top; }
+.binder-tile .t1 { font-weight: 600; overflow-wrap: anywhere; }
+.binder-tile .t2 { font-size: 12.5px; color: var(--muted); }
+.new-binder { display: flex; gap: 8px; margin-top: 16px; }
+.new-binder .search { flex: 1; min-width: 0; }
+
+.pages {
+  display: flex;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  border-radius: 14px;
+  max-width: 560px;
+  margin: 0 auto;
+  -webkit-overflow-scrolling: touch;
+}
+.pages::-webkit-scrollbar { display: none; }
+.page {
+  flex: 0 0 100%;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 12px 12px 12px 18px;
+  background: var(--page-bg);
+  border-radius: 14px;
+  box-shadow: inset 6px 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.slot {
+  display: block;
+  position: relative;
+  aspect-ratio: 63 / 88;
+  max-width: 100%;
+  padding: 0;
+  border: 1px solid var(--pocket-line);
+  background: var(--pocket);
+  border-radius: 6px;
+  overflow: hidden;
+  min-width: 0;
+}
+.slot img { width: 100%; height: 100%; object-fit: cover; }
+.slot.empty { display: grid; place-items: center; color: var(--pocket-line); font-size: 22px; font-weight: 300; }
+.slot.not-owned img { opacity: 0.55; }
+.slot .ph { position: absolute; inset: 0; display: grid; place-items: center; padding: 6px; font-size: 11px; color: #c9cedb; text-align: center; }
+.slot.sel { outline: 3px solid var(--accent); outline-offset: 1px; }
+.page-nav { display: flex; align-items: center; justify-content: center; gap: 16px; margin-top: 12px; }
+.page-nav .mono { color: var(--muted); font-size: 13px; }

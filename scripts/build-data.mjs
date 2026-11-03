@@ -151,6 +151,7 @@ async function riftcodexCards() {
       type: c.classification?.type || "",
       dom: (c.classification?.domain || []).join(" / "),
       alt: !!(meta.alternate_art || meta.overnumbered || meta.signature),
+      sig: !!meta.signature,
     };
   });
 }
@@ -207,6 +208,7 @@ async function riotGalleryCards() {
       type: (c.cardType?.type || []).map((t) => t.label).join(" / "),
       dom: (c.domain?.values || []).map((d) => d.label).join(" / "),
       alt: alt || signed,
+      sig: signed,
     };
   });
 }
@@ -252,6 +254,7 @@ async function riftbound() {
       if (!x.rar && c.rar) x.rar = c.rar;
       if (!x.type && c.type) x.type = c.type;
       if (!x.dom && c.dom) x.dom = c.dom;
+      if (c.sig) x.sig = true;
       enriched++;
       continue;
     }
