@@ -46,6 +46,7 @@
   };
   const SLOTS = 12; // cartes par page de classeur
   const SET_PAGE = 60;
+  const APP_URL = "https://ninbbus.github.io/ma-collection-tcg/";
 
   /* ================= État ================= */
 
@@ -1582,6 +1583,13 @@
         <div id="import-confirm" class="card-box" style="margin-top:10px" hidden></div>
       </div>
 
+      <p class="label">Partager l'app</p>
+      <div class="card-box">
+        <p>Envoie ce lien à tes amis : chacun aura sa propre app vide, sans accès à ta collection.</p>
+        <p class="mono" style="color:var(--fg);user-select:all;-webkit-user-select:all;overflow-wrap:anywhere">${esc(APP_URL)}</p>
+        <div class="btn-row"><button type="button" class="btn primary" id="share-app">Partager le lien</button><button type="button" class="btn" id="copy-app">Copier le lien</button></div>
+      </div>
+
       <p class="label">Catalogue de cartes</p>
       <div class="card-box">
         <p>Mis à jour automatiquement chaque nuit. Dernière mise à jour : <b>${esc(updated)}</b>.${
@@ -1598,6 +1606,25 @@
       };
     }
     $("#export").onclick = exportBackup;
+    $("#copy-app").onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(APP_URL);
+        toast("Lien copié");
+      } catch {
+        toast("Copie impossible : sélectionne le lien au-dessus");
+      }
+    };
+    $("#share-app").onclick = async () => {
+      try {
+        if (navigator.share) await navigator.share({ title: "Classeur TCG", text: "Mon app de suivi de collection Riftbound, Yu-Gi-Oh et Pokémon :", url: APP_URL });
+        else {
+          await navigator.clipboard.writeText(APP_URL);
+          toast("Lien copié");
+        }
+      } catch (e) {
+        if (e?.name !== "AbortError") toast("Partage impossible, utilise « Copier le lien »");
+      }
+    };
     $("#import-file").onchange = async (ev) => {
       const file = ev.target.files[0];
       ev.target.value = "";
