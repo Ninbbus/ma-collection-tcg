@@ -51,6 +51,8 @@ const slug = (s) =>
     .replace(/^-|-$/g, "")
     .toLowerCase() || "set";
 
+const norm = (s) => String(s ?? "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
 async function writeJSON(path, data) {
   await mkdir(join(path, ".."), { recursive: true });
   await writeFile(path, JSON.stringify(data));
@@ -98,7 +100,8 @@ async function copyPrevious(game) {
 
 /* ---------------- Riftbound (Riftcodex) ---------------- */
 
-async function riftbound() {
+// Source 1 : Riftcodex (API communautaire).
+async function riftcodexCards() {
   const API = "https://api.riftcodex.com";
   const listOf = (body) => (Array.isArray(body) ? body : body?.items || body?.data || []);
 
@@ -124,12 +127,14 @@ async function riftbound() {
   }
   if (!cards.length) throw new Error("Riftcodex n'a renvoyé aucune carte");
 
-  const bySet = new Map();
-  for (const c of cards) {
+  return cards.map((c) => {
     const setId = String(c.set?.set_id || "autre").toLowerCase();
-    if (!bySet.has(setId)) bySet.set(setId, []);
+    const m = setMeta.get(setId);
     const meta = c.metadata || {};
-    bySet.get(setId).push({
+    return {
+      setId,
+      setName: m?.name || c.set?.label || setId.toUpperCase(),
+      setDate: m?.date || "",
       id: String(c.riftbound_id || c.id),
       no: c.riftbound_id ? String(c.riftbound_id).toUpperCase() : String(c.collector_number ?? ""),
       n: c.collector_number ?? null,
@@ -139,17 +144,107 @@ async function riftbound() {
       type: c.classification?.type || "",
       dom: (c.classification?.domain || []).join(" / "),
       alt: !!(meta.alternate_art || meta.overnumbered || meta.signature),
-    });
-    if (!setMeta.has(setId)) setMeta.set(setId, { name: c.set?.label || setId.toUpperCase(), date: "" });
+    };
+  });
+}
+
+// Source 2 : galerie officielle de Riot. La page Next.js embarque toute la liste de cartes
+// dans <script id="__NEXT_DATA__">. Les nouveaux sets y apparaissent dès leur sortie.
+async function riotGalleryCards() {
+  const res = await fetch("https://playriftbound.com/en-us/card-gallery/", {
+    headers: { "User-Agent": UA, Accept: "text/html" },
+    signal: AbortSignal.timeout(120000),
+  });
+  if (!res.ok) throw new Error(`galerie Riot : HTTP ${res.status}`);
+  const page = await res.text();
+  const m = page.match(/<script id="__NEXT_DATA__" type="application\/json"[^>]*>([\s\S]*?)<\/script>/);
+  if (!m) throw new Error("galerie Riot : __NEXT_DATA__ introuvable");
+  const data = JSON.parse(m[1]);
+
+  const find = (node, depth = 0) => {
+    if (depth > 14 || !node || typeof node !== "object") return null;
+    if (Array.isArray(node)) {
+      if (node.length && node[0] && typeof node[0] === "object" && "publicCode" in node[0]) return node;
+      for (const v of node) {
+        const got = find(v, depth + 1);
+        if (got) return got;
+      }
+      return null;
+    }
+    for (const v of Object.values(node)) {
+      const got = find(v, depth + 1);
+      if (got) return got;
+    }
+    return null;
+  };
+  const raw = find(data.props || data);
+  if (!raw?.length) throw new Error("galerie Riot : liste de cartes introuvable");
+
+  return raw.map((c) => {
+    const code = String(c.publicCode || "");
+    const head = code.split("/")[0].replace("*", "");
+    const suffix = head.includes("-") ? head.split("-").slice(1).join("-") : "";
+    const signed = code.includes("*");
+    const alt = /^\d+[a-z]$/i.test(suffix);
+    const setCode = String(c.set?.value?.id || head.split("-")[0] || "autre");
+    return {
+      setId: setCode.toLowerCase(),
+      setName: c.set?.value?.label || setCode,
+      setDate: "",
+      id: String(c.id || code),
+      no: code.replace(/\/.*$/, "") + (signed ? " ✍" : ""),
+      n: c.collectorNumber ?? null,
+      name: c.name || "?",
+      img: c.cardImage?.url || "",
+      rar: c.rarity?.value?.label || "",
+      type: (c.cardType?.type || []).map((t) => t.label).join(" / "),
+      dom: (c.domain?.values || []).map((d) => d.label).join(" / "),
+      alt: alt || signed,
+    };
+  });
+}
+
+async function riftbound() {
+  const [codex, riot] = await Promise.allSettled([riftcodexCards(), riotGalleryCards()]);
+  if (codex.status === "rejected") console.error(`  Riftcodex indisponible : ${codex.reason?.message}`);
+  if (riot.status === "rejected") console.error(`  Galerie Riot indisponible : ${riot.reason?.message}`);
+  const a = codex.status === "fulfilled" ? codex.value : [];
+  const b = riot.status === "fulfilled" ? riot.value : [];
+  console.log(`  Riftcodex : ${a.length} cartes, galerie Riot : ${b.length} cartes`);
+  if (!a.length && !b.length) throw new Error("aucune source Riftbound disponible");
+
+  // Riftcodex reste la base (identifiants inchangés pour les collections existantes) ;
+  // la galerie Riot ajoute ce qui manque, en particulier les sets récents.
+  const ids = new Set(a.map((c) => c.id.toLowerCase()));
+  const sig = (c) => `${c.setId}|${c.n}|${norm(c.name)}|${c.alt ? 1 : 0}`;
+  const sigs = new Set(a.map(sig));
+  const merged = [...a];
+  let added = 0;
+  for (const c of b) {
+    if (ids.has(c.id.toLowerCase()) || sigs.has(sig(c))) continue;
+    merged.push(c);
+    ids.add(c.id.toLowerCase());
+    sigs.add(sig(c));
+    added++;
+  }
+  console.log(`  ${added} cartes ajoutées depuis la galerie Riot`);
+
+  const bySet = new Map();
+  for (const c of merged) {
+    if (!bySet.has(c.setId)) bySet.set(c.setId, { name: c.setName, date: c.setDate, cards: [] });
+    const s = bySet.get(c.setId);
+    if (!s.date && c.setDate) s.date = c.setDate;
+    const { setId, setName, setDate, ...card } = c;
+    s.cards.push(card);
   }
 
   const sets = [];
-  for (const [id, list] of bySet) {
-    list.sort((a, b) => (a.n ?? 9999) - (b.n ?? 9999) || a.no.localeCompare(b.no, "en", { numeric: true }));
-    const m = setMeta.get(id);
-    sets.push({ id, name: m.name, code: id.toUpperCase(), date: m.date, cards: list });
+  for (const [id, s] of bySet) {
+    s.cards.sort((x, y) => (x.n ?? 9999) - (y.n ?? 9999) || x.no.localeCompare(y.no, "en", { numeric: true }));
+    sets.push({ id, name: s.name, code: id.toUpperCase(), date: s.date, cards: s.cards });
   }
-  sets.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  // Sets datés du plus récent au plus ancien ; un set sans date (souvent tout nouveau) passe en tête.
+  sets.sort((x, y) => (x.date ? 1 : 0) - (y.date ? 1 : 0) || (y.date || "").localeCompare(x.date || ""));
   return sets;
 }
 
