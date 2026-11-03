@@ -215,19 +215,45 @@ async function riftbound() {
 
   // Riftcodex reste la base (identifiants inchangés pour les collections existantes) ;
   // la galerie Riot ajoute ce qui manque, en particulier les sets récents.
+  // Rapprochement par nom de set + nom de carte (les codes de set et les numéros peuvent différer
+  // entre les deux sources, ex. Vendetta), en préférant la même version et le même numéro.
+  const setKey = (c) => norm(c.setName);
+  const pool = new Map(); // set|nom -> cartes Riftcodex pas encore rapprochées
+  const setIdByName = new Map();
+  for (const c of a) {
+    const k = `${setKey(c)}|${norm(c.name)}`;
+    if (!pool.has(k)) pool.set(k, []);
+    pool.get(k).push(c);
+    if (!setIdByName.has(setKey(c))) setIdByName.set(setKey(c), { id: c.setId, name: c.setName, date: c.setDate });
+  }
   const ids = new Set(a.map((c) => c.id.toLowerCase()));
-  const sig = (c) => `${c.setId}|${c.n}|${norm(c.name)}|${c.alt ? 1 : 0}`;
-  const sigs = new Set(a.map(sig));
   const merged = [...a];
   let added = 0;
+  let enriched = 0;
   for (const c of b) {
-    if (ids.has(c.id.toLowerCase()) || sigs.has(sig(c))) continue;
-    merged.push(c);
+    if (ids.has(c.id.toLowerCase())) continue;
+    const candidates = pool.get(`${setKey(c)}|${norm(c.name)}`) || [];
+    let i = candidates.findIndex((x) => x.alt === c.alt && x.n === c.n);
+    if (i < 0) i = candidates.findIndex((x) => x.alt === c.alt);
+    if (i < 0) i = candidates.findIndex((x) => x.n === c.n);
+    if (i < 0 && candidates.length) i = 0;
+    if (i >= 0) {
+      const x = candidates.splice(i, 1)[0];
+      // Complète les infos manquantes côté Riftcodex (cartes ajoutées avec des données partielles).
+      if (x.n == null && c.n != null) x.n = c.n;
+      if (!x.img && c.img) x.img = c.img;
+      if (!x.rar && c.rar) x.rar = c.rar;
+      if (!x.type && c.type) x.type = c.type;
+      if (!x.dom && c.dom) x.dom = c.dom;
+      enriched++;
+      continue;
+    }
+    const same = setIdByName.get(setKey(c));
+    merged.push(same ? { ...c, setId: same.id, setName: same.name, setDate: same.date } : c);
     ids.add(c.id.toLowerCase());
-    sigs.add(sig(c));
     added++;
   }
-  console.log(`  ${added} cartes ajoutées depuis la galerie Riot`);
+  console.log(`  ${added} cartes ajoutées depuis la galerie Riot, ${enriched} rapprochées de Riftcodex`);
 
   const bySet = new Map();
   for (const c of merged) {
