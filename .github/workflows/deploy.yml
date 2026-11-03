@@ -30,6 +30,8 @@ jobs:
         run: |
           mkdir -p _site
           cp -R app/. _site/
+          # Numéro de version dans les liens CSS/JS : force le téléphone à charger le nouveau code.
+          sed -i "s/__BUILD__/${{ github.run_number }}-${{ github.run_attempt }}/g" _site/index.html
 
       - name: Récupérer les catalogues de cartes
         env:
