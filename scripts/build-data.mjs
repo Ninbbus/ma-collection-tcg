@@ -127,7 +127,14 @@ async function riftcodexCards() {
   }
   if (!cards.length) throw new Error("Riftcodex n'a renvoyé aucune carte");
 
-  return cards.map((c) => {
+  // Riftcodex renvoie certaines cartes plusieurs fois (constaté sur Vendetta) : une seule par identifiant.
+  const unique = new Map();
+  for (const c of cards) {
+    const k = String(c.riftbound_id || c.id).toLowerCase();
+    if (!unique.has(k)) unique.set(k, c);
+  }
+
+  return [...unique.values()].map((c) => {
     const setId = String(c.set?.set_id || "autre").toLowerCase();
     const m = setMeta.get(setId);
     const meta = c.metadata || {};
@@ -254,27 +261,6 @@ async function riftbound() {
     added++;
   }
   console.log(`  ${added} cartes ajoutées depuis la galerie Riot, ${enriched} rapprochées de Riftcodex`);
-
-  // Diagnostic visible dans les annotations GitHub Actions (aide au rapprochement des sources).
-  if (process.env.GITHUB_ACTIONS) {
-    const enc = (t) => String(t).replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
-    const count = (list) => {
-      const m = new Map();
-      for (const c of list) m.set(`${c.setId} «${c.setName}»`, (m.get(`${c.setId} «${c.setName}»`) || 0) + 1);
-      return [...m].map(([k, v]) => `${k}: ${v}`).join("\n");
-    };
-    console.log(`::notice title=RB sets Riftcodex::${enc(count(a))}`);
-    console.log(`::notice title=RB sets Riot::${enc(count(b))}`);
-    const ven = merged.filter((c) => /vendetta/i.test(c.setName) || /^v/i.test(c.setId));
-    const byName = new Map();
-    for (const c of ven) byName.set(norm(c.name), [...(byName.get(norm(c.name)) || []), c]);
-    const dups = [...byName.values()].filter((l) => l.length > 1).slice(0, 12);
-    const fmt = (c) => `${c.id} | no=${c.no} | n=${c.n} | alt=${c.alt} | set=${c.setId} | ${c.name} | img=${c.img ? "oui" : "non"} | src=${b.includes(c) ? "riot" : "codex"}`;
-    console.log(`::notice title=RB doublons Vendetta (${[...byName.values()].filter((l) => l.length > 1).length})::${enc(dups.map((l) => l.map(fmt).join("\n")).join("\n--\n"))}`);
-    const sample = (list) => list.filter((c) => /vendetta/i.test(c.setName)).slice(0, 5).map(fmt).join("\n");
-    console.log(`::notice title=RB échantillon Vendetta codex::${enc(sample(a))}`);
-    console.log(`::notice title=RB échantillon Vendetta riot::${enc(sample(b))}`);
-  }
 
   const bySet = new Map();
   for (const c of merged) {
