@@ -546,3 +546,38 @@ img { max-width: 100%; display: block; }
 .slot.sel { outline: 3px solid var(--accent); outline-offset: 1px; }
 .page-nav { display: flex; align-items: center; justify-content: center; gap: 16px; margin-top: 12px; }
 .page-nav .mono { color: var(--muted); font-size: 13px; }
+
+/* ---------- Bandeau de sauvegarde ---------- */
+.banner {
+  max-width: 900px;
+  margin: 10px auto 0;
+  margin-inline: max(16px, env(safe-area-inset-left, 0px)) max(16px, env(safe-area-inset-right, 0px));
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  font-size: 13.5px;
+}
+@media (min-width: 932px) { .banner { margin-inline: auto; } }
+.banner span { flex: 1 1 180px; min-width: 0; }
+.banner + .view { padding-top: 10px; }
+
+/* ---------- Filtres d'un set ---------- */
+.facets { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin: -4px 0 14px; }
+.facets label { display: grid; gap: 4px; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; min-width: 0; }
+.facets select {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 9px 10px;
+  font-size: 16px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--fg);
+}

@@ -36,7 +36,7 @@
   const PRIOS = { 3: "Haute", 2: "Moyenne", 1: "Basse" };
   // Ordre des raretés, de la plus haute à la plus basse.
   const RARITIES = {
-    riftbound: ["Signed Showcase", "Showcase", "Epic", "Rare", "Uncommon", "Common"],
+    riftbound: ["Showcase signée", "Showcase Overnumber", "Showcase Alt Art", "Showcase", "Epic", "Rare", "Uncommon", "Common"],
     yugioh: [
       "Quarter Century Secret Rare", "Starlight Rare", "Ghost Rare", "Collector's Rare", "Ultimate Rare",
       "Prismatic Secret Rare", "Platinum Secret Rare", "Ultra Secret Rare", "Secret Rare", "Prismatic Ultimate Rare",
@@ -214,8 +214,22 @@
   function isSigned(e) {
     return !!e.sig || /✍|\*/.test(e.no || "") || /\b(signed|signature)\b/i.test(`${e.name} ${e.rar}`);
   }
-  function rarityOf(e) {
-    if (e.game === "riftbound" && isSigned(e)) return "Signed Showcase";
+  // Identifiants Riftbound du type « ven-042a-166 » : numéro, lettre de version alternative, total du set.
+  function rbFlags(x) {
+    const m = String(x.id || "").toLowerCase().match(/^[a-z0-9]+-(\d+)([a-z]?)-(\d+)$/);
+    return {
+      sig: isSigned(x),
+      ovr: !!x.ovr || !!(m && +m[1] > +m[3]),
+      aa: !!x.aa || !!(m && m[2]) || /\(alternate art\)/i.test(x.name || ""),
+    };
+  }
+  function rarityOf(e, game = e.game) {
+    if (game === "riftbound") {
+      const f = rbFlags(e);
+      if (f.sig) return "Showcase signée";
+      if (f.ovr) return "Showcase Overnumber";
+      if (f.aa) return "Showcase Alt Art";
+    }
     return e.rar || "";
   }
   function rarityRank(game, rar) {
@@ -277,6 +291,8 @@
   function openSet(setId) {
     S.route[S.game] = { setId };
     S.filter = "all";
+    S.rarFilter = "";
+    S.domFilter = "";
     S.listQuery = "";
     render();
     window.scrollTo(0, 0);
@@ -291,7 +307,34 @@
     if (b) setTab(b.dataset.tab);
   });
 
+  const DAY = 86400000;
+  function drawBackupBanner() {
+    const el = $("#banner");
+    const cards = Object.values(S.col.cards);
+    const now = Date.now();
+    const first = cards.reduce((m, e) => Math.min(m, e.added || now), now);
+    const last = S.col.lastExport || 0;
+    const due = cards.length > 0 && (last ? now - last > 14 * DAY : now - first > 3 * DAY);
+    const snoozed = (S.col.backupSnooze || 0) > now;
+    if (!due || snoozed || S.tab === "settings") {
+      el.hidden = true;
+      return;
+    }
+    const days = last ? Math.floor((now - last) / DAY) : 0;
+    el.hidden = false;
+    el.innerHTML = `<span>${last ? `Dernière sauvegarde il y a ${days} jours.` : "Tu n'as encore jamais sauvegardé ta collection."}</span>
+      <button type="button" class="btn small primary" id="bn-save">Sauvegarder</button>
+      <button type="button" class="btn small" id="bn-later">Plus tard</button>`;
+    $("#bn-save").onclick = exportBackup;
+    $("#bn-later").onclick = () => {
+      S.col.backupSnooze = now + 3 * DAY;
+      save();
+      el.hidden = true;
+    };
+  }
+
   function render() {
+    drawBackupBanner();
     const fn = { sets: renderSetsTab, collection: renderCollection, binders: renderBinders, wishlist: renderWishlist, settings: renderSettings }[S.tab];
     fn();
   }
@@ -464,6 +507,7 @@
         <span class="spacer"></span>
         <button type="button" class="chip quick" id="quick" aria-pressed="${S.quick}">Ajout rapide</button>
       </div>
+      ${facetsHTML(game, all)}
       <p class="note" id="quick-note" ${S.quick ? "" : "hidden"}>Ajout rapide : un appui ajoute un exemplaire ${esc(d.lang)} · ${esc(d.ver)} · ${esc(d.cond)}. Appui long pour ouvrir la fiche.</p>
       <div class="binder" id="binder"></div>
       <div class="btn-row" style="margin-top:18px"><button type="button" class="btn" id="add-custom">+ Ajouter une carte hors base</button></div>
@@ -485,6 +529,11 @@
         drawBinder(game, set, all);
       }
     });
+    $("#facets")?.addEventListener("change", (ev) => {
+      if (ev.target.id === "f-rar") S.rarFilter = ev.target.value;
+      if (ev.target.id === "f-dom") S.domFilter = ev.target.value;
+      drawBinder(game, set, all);
+    });
     $("#quick").onclick = (ev) => {
       S.quick = !S.quick;
       ev.currentTarget.setAttribute("aria-pressed", String(S.quick));
@@ -495,6 +544,31 @@
     bindPress($("#binder"), game, set);
   }
 
+  // Deuxième critère selon le jeu : couleur (domaine) pour Riftbound, type de carte pour Yu-Gi-Oh.
+  const FACET_LABEL = { riftbound: "Couleur", yugioh: "Type" };
+  function facetValues(game, c) {
+    if (game === "riftbound") return String(c.dom || "").split("/").map((x) => x.trim()).filter(Boolean);
+    if (game === "yugioh") {
+      const t = String(c.type || "");
+      if (!t) return [];
+      return [/spell/i.test(t) ? "Magie" : /trap/i.test(t) ? "Piège" : "Monstre"];
+    }
+    return [];
+  }
+  function facetsHTML(game, all) {
+    const rars = [...new Set(all.map((c) => rarityOf(c, game)).filter(Boolean))].sort(
+      (a, b) => rarityRank(game, a) - rarityRank(game, b) || a.localeCompare(b)
+    );
+    const doms = [...new Set(all.flatMap((c) => facetValues(game, c)))].sort((a, b) => a.localeCompare(b));
+    if (!S.rarFilter || !rars.includes(S.rarFilter)) S.rarFilter = "";
+    if (!S.domFilter || !doms.includes(S.domFilter)) S.domFilter = "";
+    if (rars.length < 2 && doms.length < 2) return "";
+    return `<div class="facets" id="facets">
+      ${rars.length > 1 ? `<label>Rareté<select id="f-rar"><option value="">Toutes</option>${rars.map((r) => `<option ${r === S.rarFilter ? "selected" : ""}>${esc(r)}</option>`).join("")}</select></label>` : ""}
+      ${doms.length > 1 ? `<label>${FACET_LABEL[game] || "Type"}<select id="f-dom"><option value="">Toutes</option>${doms.map((d) => `<option ${d === S.domFilter ? "selected" : ""}>${esc(d)}</option>`).join("")}</select></label>` : ""}
+    </div>`;
+  }
+
   function drawBinder(game, set, all) {
     const q = norm(S.listQuery.trim());
     const list = all.filter((c) => {
@@ -503,6 +577,8 @@
       if (S.filter === "owned" && !qty) return false;
       if (S.filter === "missing" && qty) return false;
       if (S.filter === "wish" && !e?.wish) return false;
+      if (S.rarFilter && rarityOf(c, game) !== S.rarFilter) return false;
+      if (S.domFilter && !facetValues(game, c).includes(S.domFilter)) return false;
       if (q && !norm(`${c.name} ${c.no}`).includes(q)) return false;
       return true;
     });
@@ -1290,6 +1366,7 @@
       <p class="label">Sauvegarde</p>
       <div class="card-box">
         <p>Ta collection est enregistrée sur cet iPhone uniquement (${total.length} fiche${total.length > 1 ? "s" : ""}, tous jeux confondus). Exporte une sauvegarde de temps en temps et range-la dans iCloud Drive.</p>
+        <p><b>Dernière sauvegarde :</b> ${S.col.lastExport ? new Date(S.col.lastExport).toLocaleDateString("fr-FR", { dateStyle: "long" }) : "jamais"}</p>
         <div class="btn-row">
           <button type="button" class="btn primary" id="export">Exporter la sauvegarde</button>
           <label class="btn" for="import-file" style="display:inline-block">Importer une sauvegarde</label>
@@ -1357,6 +1434,14 @@
     render();
   }
 
+  function markExported() {
+    S.col.lastExport = Date.now();
+    S.col.backupSnooze = 0;
+    save();
+    drawBackupBanner();
+    if (S.tab === "settings") renderSettings();
+  }
+
   async function exportBackup() {
     await Store.flush();
     const stamp = new Date().toISOString().slice(0, 10);
@@ -1366,6 +1451,7 @@
     try {
       if (navigator.canShare?.({ files: [file] })) {
         await navigator.share({ files: [file], title: "Sauvegarde Classeur TCG" });
+        markExported();
         return;
       }
     } catch (e) {
@@ -1376,6 +1462,7 @@
     a.download = name;
     document.body.appendChild(a);
     a.click();
+    markExported();
     setTimeout(() => {
       URL.revokeObjectURL(a.href);
       a.remove();
