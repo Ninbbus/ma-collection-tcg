@@ -98,7 +98,26 @@ async function copyPrevious(game) {
   return sets;
 }
 
-/* ---------------- Riftbound (Riftcodex) ---------------- */
+/* ---------------- Riftbound ---------------- */
+
+// Identité exacte d'une impression : set + code imprimé (« 019a », « 299* », « R01 », « SP1 »).
+// Les deux sources utilisent les mêmes codes : on rapproche sur ce code, jamais sur le nom seul.
+function rbVariant(setId, code, total, meta = {}) {
+  const raw = String(code || "").toLowerCase();
+  const sig = raw.includes("*") || !!meta.signature;
+  const bare = raw.replace(/\*/g, "").replace(/^0+(\d)/, "$1");
+  const num = /^(\d+)/.exec(bare)?.[1];
+  const aa = /^\d+[a-z]$/.test(bare) || !!meta.alternate_art;
+  const ovr = (!!num && !!total && +num > +total) || !!meta.overnumbered;
+  return { key: `${setId}|${bare}|${sig ? "s" : ""}`, sig, aa, ovr };
+}
+const flags = (v) => ({ ...(v.sig ? { sig: true } : {}), ...(v.ovr ? { ovr: true } : {}), ...(v.aa ? { aa: true } : {}) });
+// « Jinx, Demolitionist (Overnumbered) » -> « Jinx, Demolitionist » : la version est affichée à part.
+const rbName = (n) =>
+  String(n || "?")
+    .replace(/\s*\((alternate art|overnumbered|signature|signed)\)\s*$/i, "")
+    .replace(/\s+-\s+/, ", ")
+    .trim();
 
 // Source 1 : Riftcodex (API communautaire).
 async function riftcodexCards() {
@@ -128,7 +147,6 @@ async function riftcodexCards() {
   if (!cards.length) throw new Error("Riftcodex n'a renvoyé aucune carte");
 
   // Riftcodex renvoie certaines cartes plusieurs fois (constaté sur Vendetta) : une seule par identifiant.
-  globalThis.__codexRaw = cards;
   const unique = new Map();
   for (const c of cards) {
     const k = String(c.riftbound_id || c.id).toLowerCase();
@@ -139,20 +157,24 @@ async function riftcodexCards() {
     const setId = String(c.set?.set_id || "autre").toLowerCase();
     const m = setMeta.get(setId);
     const meta = c.metadata || {};
+    const parts = String(c.riftbound_id || "").split("-");
+    const code = parts.length >= 3 ? parts.slice(1, -1).join("-") : parts[1] || String(c.collector_number ?? "");
+    const total = parts.length >= 3 && /^\d+$/.test(parts.at(-1)) ? parts.at(-1) : null;
+    const v = rbVariant(setId, code, total, meta);
     return {
       setId,
       setName: m?.name || c.set?.label || setId.toUpperCase(),
       setDate: m?.date || "",
+      vkey: v.key,
       id: String(c.riftbound_id || c.id),
       no: c.riftbound_id ? String(c.riftbound_id).toUpperCase() : String(c.collector_number ?? ""),
       n: c.collector_number ?? null,
-      name: c.name || "?",
+      name: rbName(c.name),
       img: c.media?.image_url || "",
       rar: c.classification?.rarity || "",
       type: c.classification?.type || "",
       dom: (c.classification?.domain || []).join(" / "),
-      alt: !!(meta.alternate_art || meta.overnumbered || meta.signature),
-      sig: !!meta.signature,
+      ...flags(v),
     };
   });
 }
@@ -187,30 +209,31 @@ async function riotGalleryCards() {
     return null;
   };
   const raw = find(data.props || data);
-  globalThis.__riotRaw = raw;
   if (!raw?.length) throw new Error("galerie Riot : liste de cartes introuvable");
 
   return raw.map((c) => {
-    const code = String(c.publicCode || "");
-    const head = code.split("/")[0].replace("*", "");
-    const suffix = head.includes("-") ? head.split("-").slice(1).join("-") : "";
-    const signed = code.includes("*");
-    const alt = /^\d+[a-z]$/i.test(suffix);
+    const pub = String(c.publicCode || "");
+    const head = pub.split("/")[0];
+    const total = /^\d+$/.test(pub.split("/")[1] || "") ? pub.split("/")[1] : null;
+    const code = head.includes("-") ? head.split("-").slice(1).join("-") : head;
     const setCode = String(c.set?.value?.id || head.split("-")[0] || "autre");
+    const setId = setCode.toLowerCase();
+    const v = rbVariant(setId, code, total);
+    const name = c.subtitle ? `${c.name}, ${c.subtitle}` : c.name;
     return {
-      setId: setCode.toLowerCase(),
+      setId,
       setName: c.set?.value?.label || setCode,
       setDate: "",
-      id: String(c.id || code),
-      no: code.replace(/\/.*$/, "") + (signed ? " ✍" : ""),
+      vkey: v.key,
+      id: String(c.id || pub),
+      no: head.replace("*", "") + (v.sig ? " ✍" : ""),
       n: c.collectorNumber ?? null,
-      name: c.name || "?",
+      name: name || "?",
       img: c.cardImage?.url || "",
       rar: c.rarity?.value?.label || "",
       type: (c.cardType?.type || []).map((t) => t.label).join(" / "),
       dom: (c.domain?.values || []).map((d) => d.label).join(" / "),
-      alt: alt || signed,
-      sig: signed,
+      ...flags(v),
     };
   });
 }
@@ -224,91 +247,40 @@ async function riftbound() {
   console.log(`  Riftcodex : ${a.length} cartes, galerie Riot : ${b.length} cartes`);
   if (!a.length && !b.length) throw new Error("aucune source Riftbound disponible");
 
-  // ---- DIAGNOSTIC TEMPORAIRE ----
-  if (process.env.GITHUB_ACTIONS) {
-    const enc = (t) => String(t).slice(0, 3800).replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
-    const note = (title, body) => console.log(`::notice title=${title}::${enc(body)}`);
-    const cr = globalThis.__codexRaw || [];
-    const rr = globalThis.__riotRaw || [];
-    if (cr[0]) note("D1 codex champs", JSON.stringify(cr[0]).slice(0, 3000));
-    const ven = cr.filter((c) => /ven|vendetta/i.test(`${c.set?.set_id} ${c.set?.label}`));
-    const groups = new Map();
-    for (const c of ven) {
-      const k = String(c.riftbound_id || c.id).toLowerCase();
-      groups.set(k, [...(groups.get(k) || []), c]);
-    }
-    const dup = [...groups.entries()].filter(([, l]) => l.length > 1);
-    const strip = (c) => {
-      const o = { ...c };
-      delete o.text; delete o.description; delete o.attributes;
-      if (o.media) o.media = { img: String(o.media.image_url || "").slice(-40) };
-      return JSON.stringify(o).slice(0, 420);
-    };
-    note(`D2 codex VEN ${ven.length} entrées, ${groups.size} ids, ${dup.length} ids multiples`, dup.slice(0, 4).map(([k, l]) => `${k}:\n` + l.map(strip).join("\n")).join("\n---\n"));
-    const meta = (c) => JSON.stringify(c.metadata || {});
-    const venOdd = ven.filter((c) => /signature|overnumbered|alternate/.test(meta(c)) && /true/.test(meta(c)));
-    note(`D3 codex VEN variantes ${venOdd.length}`, venOdd.slice(0, 30).map((c) => `${c.riftbound_id} | n=${c.collector_number} | ${c.name} | ${meta(c)} | ${c.classification?.rarity}`).join("\n"));
-    for (const code of ["VEN", "RAD"]) {
-      const xs = rr.filter((c) => String(c.publicCode || "").toUpperCase().startsWith(code + "-"));
-      const star = xs.filter((c) => String(c.publicCode).includes("*"));
-      const letter = xs.filter((c) => /^[A-Z]+-\d+[a-z]/i.test(String(c.publicCode)));
-      const totals = {};
-      for (const c of xs) { const t = String(c.publicCode).split("/")[1]; totals[t] = (totals[t] || 0) + 1; }
-      note(`D4 riot ${code} ${xs.length} cartes, ${star.length} signées, ${letter.length} alt`, `totaux: ${JSON.stringify(totals)}\n` + xs.filter((c) => (c.collectorNumber || 0) > 160 || String(c.publicCode).includes("*")).slice(0, 40).map((c) => `${c.id} | ${c.publicCode} | n=${c.collectorNumber} | ${c.name} | ${c.rarity?.value?.label} | keys:${Object.keys(c).join(",").slice(0, 200)}`).join("\n"));
-    }
-    const radAny = rr.filter((c) => /RAD/i.test(String(c.publicCode)) && (c.collectorNumber || 0) > 200);
-    if (radAny[0]) note("D5 riot RAD exemple complet", JSON.stringify(radAny[radAny.length - 1]).slice(0, 3000));
-  }
-
   // Riftcodex reste la base (identifiants inchangés pour les collections existantes) ;
-  // la galerie Riot ajoute ce qui manque, en particulier les sets récents.
-  // Rapprochement par nom de set + nom de carte (les codes de set et les numéros peuvent différer
-  // entre les deux sources, ex. Vendetta), en préférant la même version et le même numéro.
-  const setKey = (c) => norm(c.setName);
-  const pool = new Map(); // set|nom -> cartes Riftcodex pas encore rapprochées
-  const setIdByName = new Map();
-  for (const c of a) {
-    const k = `${setKey(c)}|${norm(c.name)}`;
-    if (!pool.has(k)) pool.set(k, []);
-    pool.get(k).push(c);
-    if (!setIdByName.has(setKey(c))) setIdByName.set(setKey(c), { id: c.setId, name: c.setName, date: c.setDate });
-  }
-  const ids = new Set(a.map((c) => c.id.toLowerCase()));
-  const merged = [...a];
+  // la galerie Riot complète ce qui manque (sets récents, signées, overnumber).
+  // Rapprochement uniquement sur l'impression exacte (set + code imprimé + signée ou non).
+  const byKey = new Map();
+  for (const c of a) if (!byKey.has(c.vkey)) byKey.set(c.vkey, c);
+  const merged = [...byKey.values()];
   let added = 0;
   let enriched = 0;
   for (const c of b) {
-    if (ids.has(c.id.toLowerCase())) continue;
-    const candidates = pool.get(`${setKey(c)}|${norm(c.name)}`) || [];
-    let i = candidates.findIndex((x) => x.alt === c.alt && x.n === c.n);
-    if (i < 0) i = candidates.findIndex((x) => x.alt === c.alt);
-    if (i < 0) i = candidates.findIndex((x) => x.n === c.n);
-    if (i < 0 && candidates.length) i = 0;
-    if (i >= 0) {
-      const x = candidates.splice(i, 1)[0];
-      // Complète les infos manquantes côté Riftcodex (cartes ajoutées avec des données partielles).
+    const x = byKey.get(c.vkey);
+    if (x) {
       if (x.n == null && c.n != null) x.n = c.n;
       if (!x.img && c.img) x.img = c.img;
       if (!x.rar && c.rar) x.rar = c.rar;
       if (!x.type && c.type) x.type = c.type;
       if (!x.dom && c.dom) x.dom = c.dom;
-      if (c.sig) x.sig = true;
+      for (const f of ["sig", "ovr", "aa"]) if (c[f]) x[f] = true;
       enriched++;
       continue;
     }
-    const same = setIdByName.get(setKey(c));
-    merged.push(same ? { ...c, setId: same.id, setName: same.name, setDate: same.date } : c);
-    ids.add(c.id.toLowerCase());
+    byKey.set(c.vkey, c);
+    merged.push(c);
     added++;
   }
   console.log(`  ${added} cartes ajoutées depuis la galerie Riot, ${enriched} rapprochées de Riftcodex`);
+  const stat = (k) => merged.filter((c) => c[k]).length;
+  console.log(`  Variantes : ${stat("sig")} signées, ${stat("ovr")} overnumber, ${stat("aa")} alt art`);
 
   const bySet = new Map();
   for (const c of merged) {
     if (!bySet.has(c.setId)) bySet.set(c.setId, { name: c.setName, date: c.setDate, cards: [] });
     const s = bySet.get(c.setId);
     if (!s.date && c.setDate) s.date = c.setDate;
-    const { setId, setName, setDate, ...card } = c;
+    const { setId, setName, setDate, vkey, ...card } = c;
     s.cards.push(card);
   }
 

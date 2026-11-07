@@ -46,8 +46,17 @@
   };
   const SLOTS = 12; // cartes par page de classeur
   const SET_PAGE = 60;
-  const APP_VERSION = "1.4";
+  const APP_VERSION = "1.4.1";
   const CHANGELOG = [
+    {
+      v: "1.4.1",
+      date: "7 novembre 2026",
+      items: [
+        "Riftbound : les versions overnumber, signées et alt art sont maintenant bien séparées et classées (Vendetta et tous les sets)",
+        "Les cartes de ta collection sont remises à jour automatiquement avec la bonne rareté",
+        "Carte hors base : choix de la version (Showcase signée, Overnumber, Alt Art) pour les cartes absentes du catalogue",
+      ],
+    },
     {
       v: "1.4",
       date: "7 novembre 2026",
@@ -175,7 +184,25 @@
     if (c.setData.has(setId)) return c.setData.get(setId);
     const data = await fetchJSON(`data/${game}/sets/${encodeURIComponent(setId)}.json`);
     c.setData.set(setId, data);
+    syncEntries(game, data);
     return data;
+  }
+  // Remet à jour les fiches de la collection avec le catalogue (rareté, versions signée / overnumber / alt art).
+  function syncEntries(game, set) {
+    let changed = false;
+    for (const c of set.cards || []) {
+      const e = S.col.cards[keyOf(game, c.id)];
+      if (!e || e.custom) continue;
+      const want = { sig: !!c.sig, ovr: !!c.ovr, aa: !!c.aa, rar: c.rar || "", name: c.name || e.name, no: c.no || "", img: c.img || e.img };
+      for (const [k, v] of Object.entries(want)) {
+        if (e[k] !== v) {
+          e[k] = v;
+          changed = true;
+        }
+      }
+    }
+    if (changed) save();
+    return changed;
   }
   async function loadSearch(game) {
     const c = cat(game);
@@ -215,6 +242,8 @@
         img: card.img || "",
         rar: card.rar || "",
         sig: !!card.sig,
+        ovr: !!card.ovr,
+        aa: !!card.aa,
         copies: [],
         wish: 0,
         custom: !!card.custom,
@@ -1283,6 +1312,11 @@
         <label>Numéro (facultatif)<input id="cf-no" autocomplete="off" placeholder="ex. OGN-001 CN"></label>
         <label>Langue<select id="cf-lang">${options(g.langs, game === "riftbound" ? "CN" : d.lang)}</select></label>
         <label>Photo (facultatif)<input id="cf-photo" type="file" accept="image/*"></label>
+        ${
+          game === "riftbound"
+            ? `<label>Version<select id="cf-var"><option value="">Normale</option><option value="sig">Showcase signée</option><option value="ovr">Showcase Overnumber</option><option value="aa">Showcase Alt Art</option><option value="sc">Showcase</option></select></label>`
+            : ""
+        }
         <label class="row-check" style="display:flex;align-items:center;gap:8px;color:var(--fg)"><input id="cf-owned" type="checkbox" checked style="width:20px;height:20px"> Je la possède déjà</label>
         <button type="submit" class="btn primary">Ajouter la carte</button>
       </form>`;
@@ -1308,7 +1342,18 @@
           toast("Photo illisible, carte ajoutée sans photo");
         }
       }
-      const card = { id: `custom-${Date.now().toString(36)}`, no: $("#cf-no").value.trim(), name, img, rar: "", custom: true };
+      const variant = $("#cf-var")?.value || "";
+      const card = {
+        id: `custom-${Date.now().toString(36)}`,
+        no: $("#cf-no").value.trim(),
+        name,
+        img,
+        rar: variant ? "Showcase" : "",
+        custom: true,
+        sig: variant === "sig",
+        ovr: variant === "ovr",
+        aa: variant === "aa",
+      };
       const e = ensureEntry(game, card, set);
       if ($("#cf-owned").checked) e.copies.push({ ...newCopy(game), lang: $("#cf-lang").value });
       save();
@@ -2215,5 +2260,10 @@
     fetchJSON("data/meta.json").then((m) => (meta = m)).catch(() => {});
     setGame(GAMES[S.col.lastGame] ? S.col.lastGame : "riftbound");
     if (S.col.seenVersion !== APP_VERSION) showIntro();
+    // Remet à niveau les fiches Riftbound existantes (raretés et versions corrigées).
+    const rbSets = [...new Set(Object.values(S.col.cards).filter((e) => e.game === "riftbound" && !e.custom && e.setId).map((e) => e.setId))];
+    Promise.all(rbSets.map((id) => loadSet("riftbound", id).catch(() => null))).then(() => {
+      if (S.tab === "collection" || S.tab === "wishlist") refreshKeepingScroll();
+    });
   })();
 })();
