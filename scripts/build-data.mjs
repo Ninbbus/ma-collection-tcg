@@ -273,7 +273,15 @@ async function riftbound() {
   }
   console.log(`  ${added} cartes ajoutées depuis la galerie Riot, ${enriched} rapprochées de Riftcodex`);
   const stat = (k) => merged.filter((c) => c[k]).length;
-  console.log(`  Variantes : ${stat("sig")} signées, ${stat("ovr")} overnumber, ${stat("aa")} alt art`);
+  const perSet = {};
+  for (const c of merged) {
+    const k = c.setId.toUpperCase();
+    perSet[k] ||= { cartes: 0, sig: 0, ovr: 0, aa: 0 };
+    perSet[k].cartes++;
+    for (const f of ["sig", "ovr", "aa"]) if (c[f]) perSet[k][f]++;
+  }
+  const summary = `${added} ajoutées depuis Riot, ${enriched} rapprochées. ` + Object.entries(perSet).map(([k, v]) => `${k} ${v.cartes} (signées ${v.sig}, overnumber ${v.ovr}, alt ${v.aa})`).join(" · ");
+  console.log(process.env.GITHUB_ACTIONS ? `::notice title=Riftbound::${summary}` : `  ${summary}`);
 
   const bySet = new Map();
   for (const c of merged) {
