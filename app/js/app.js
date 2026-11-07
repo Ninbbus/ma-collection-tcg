@@ -46,6 +46,36 @@
   };
   const SLOTS = 12; // cartes par page de classeur
   const SET_PAGE = 60;
+  const APP_VERSION = "1.4";
+  const CHANGELOG = [
+    {
+      v: "1.4",
+      date: "7 novembre 2026",
+      items: [
+        "Multi-sélection dans un set : ajoute, mets en wishlist ou range dans un classeur plusieurs cartes d'un coup",
+        "Prix max dans la wishlist, affiché sur l'image partagée",
+        "Lien Cardmarket sur chaque fiche carte",
+        "Glisse la fiche d'une carte vers le bas pour la fermer",
+        "Touche le visuel d'une carte pour l'afficher en grand",
+        "Page de nouveautés et numéro de version dans Réglages",
+      ],
+    },
+    {
+      v: "1.3",
+      date: "3 novembre 2026",
+      items: [
+        "Raretés Showcase détaillées : signée, Overnumber, Alt Art",
+        "Filtres par rareté et par couleur dans les sets",
+        "Rappel de sauvegarde",
+        "Partage de la wishlist en image",
+        "Lien de l'app à partager dans Réglages",
+      ],
+    },
+    { v: "1.2", date: "3 novembre 2026", items: ["Classeurs vitrine avec pages de 12 cartes", "Collection classée par set ou par rareté", "Mise à jour automatique à l'ouverture"] },
+    { v: "1.1", date: "3 novembre 2026", items: ["Visuels dans les résultats de recherche", "Set Radiance ajouté via la galerie officielle Riot", "Doublons du set Vendetta supprimés"] },
+    { v: "1.0", date: "3 novembre 2026", items: ["Première version : Riftbound, Yu-Gi-Oh et Pokémon, collection, wishlist, sauvegarde, cartes hors base"] },
+  ];
+  const CARDMARKET = { riftbound: "Riftbound", yugioh: "YuGiOh", pokemon: "Pokemon" };
   const APP_URL = "https://ninbbus.github.io/ma-collection-tcg/";
 
   /* ================= État ================= */
@@ -66,6 +96,9 @@
     binderPage: 0,
     binderEdit: false,
     binderSel: null,
+    selecting: false, // multi-sélection dans un set
+    sel: new Set(),
+    visible: [],
     col: { cards: {}, defaults: {}, binders: [], lastGame: "riftbound" },
   };
   const catalog = {}; // game -> { sets, setData: Map, search }
@@ -85,11 +118,34 @@
       .toLowerCase();
   const eur = (n) => (n || 0).toLocaleString("fr-FR", { style: "currency", currency: "EUR" });
   const keyOf = (game, id) => `${game}:${id}`;
+  const money = (n) => {
+    const d = Number(n) % 1 ? 2 : 0;
+    return `${Number(n).toLocaleString("fr-FR", { minimumFractionDigits: d, maximumFractionDigits: d })} €`;
+  };
+  const plural = (n, word) => `${n} ${word}${n > 1 ? "s" : ""}`;
+  const parsePrice = (v) => {
+    const n = parseFloat(String(v ?? "").replace(",", "."));
+    return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null;
+  };
+  // Recherche Cardmarket préremplie (aucune source ne donne l'adresse exacte de chaque carte).
+  function cardmarketURL(game, card) {
+    const name = String(card.name || "")
+      .replace(/\s*\((alternate art|alt art|signature|signed|overnumbered|showcase)[^)]*\)/gi, "")
+      .trim();
+    return `https://www.cardmarket.com/fr/${CARDMARKET[game]}/Products/Search?searchString=${encodeURIComponent(name)}`;
+  }
+  // Version haute définition d'un visuel, quand la source en propose une.
+  function bigImage(url) {
+    return String(url || "")
+      .replace("/cards_small/", "/cards/")
+      .replace(/\/low\.webp$/, "/high.webp");
+  }
 
   const ICON = {
     back: '<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>',
     close: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
     trash: '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>',
+    ext: '<svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>',
     star: '<svg viewBox="0 0 24 24"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/></svg>',
   };
 
@@ -264,6 +320,8 @@
     if (!GAMES[game]) return;
     S.game = game;
     S.col.lastGame = game;
+    S.selecting = false;
+    S.sel = new Set();
     S.setQuery = "";
     S.listQuery = "";
     S.filter = "all";
@@ -280,6 +338,8 @@
     if (tab === S.tab && tab === "binders") S.binderOpen[S.game] = null;
     S.binderEdit = false;
     S.binderSel = null;
+    S.selecting = false;
+    S.sel = new Set();
     S.tab = tab;
     S.listQuery = "";
     for (const b of document.querySelectorAll("#tabbar button")) {
@@ -291,6 +351,8 @@
   }
   function openSet(setId) {
     S.route[S.game] = { setId };
+    S.selecting = false;
+    S.sel = new Set();
     S.filter = "all";
     S.rarFilter = "";
     S.domFilter = "";
@@ -335,6 +397,7 @@
   }
 
   function render() {
+    document.body.classList.remove("selecting");
     drawBackupBanner();
     const fn = { sets: renderSetsTab, collection: renderCollection, binders: renderBinders, wishlist: renderWishlist, settings: renderSettings }[S.tab];
     fn();
@@ -507,15 +570,32 @@
         <button type="button" class="chip" data-filter="wish" aria-pressed="${S.filter === "wish"}">Wishlist</button>
         <span class="spacer"></span>
         <button type="button" class="chip quick" id="quick" aria-pressed="${S.quick}">Ajout rapide</button>
+        <button type="button" class="chip quick" id="multi" aria-pressed="${S.selecting}">Sélection</button>
       </div>
       ${facetsHTML(game, all)}
+      <p class="note" id="multi-note" ${S.selecting ? "" : "hidden"}>Sélection : touche les cartes voulues, puis choisis une action en bas. Appui long pour ouvrir une fiche.</p>
       <p class="note" id="quick-note" ${S.quick ? "" : "hidden"}>Ajout rapide : un appui ajoute un exemplaire ${esc(d.lang)} · ${esc(d.ver)} · ${esc(d.cond)}. Appui long pour ouvrir la fiche.</p>
       <div class="binder" id="binder"></div>
       <div class="btn-row" style="margin-top:18px"><button type="button" class="btn" id="add-custom">+ Ajouter une carte hors base</button></div>
-      <p class="note">Pour les cartes absentes du catalogue, comme certaines exclusivités chinoises, avec ta propre photo.</p>`;
+      <p class="note">Pour les cartes absentes du catalogue, comme certaines exclusivités chinoises, avec ta propre photo.</p>
+      <div class="selbar-space" ${S.selecting ? "" : "hidden"}></div>
+      <div class="selbar" id="selbar" ${S.selecting ? "" : "hidden"}>
+        <div class="selbar-top"><b id="sel-count"></b><span class="spacer"></span>
+          <button type="button" class="btn small" id="sel-all">Tout</button>
+          <button type="button" class="btn small" id="sel-none">Aucune</button>
+        </div>
+        <div class="selbar-actions">
+          <button type="button" class="btn primary" data-bulk="add">Ajouter</button>
+          <button type="button" class="btn" data-bulk="wish">Wishlist</button>
+          <button type="button" class="btn" data-bulk="binder">Classeur</button>
+        </div>
+      </div>`;
 
+    document.body.classList.toggle("selecting", S.selecting);
     $("#back").onclick = () => {
       S.route[game] = {};
+      S.selecting = false;
+      S.sel = new Set();
       render();
     };
     $("#card-search").addEventListener("input", (ev) => {
@@ -535,11 +615,39 @@
       if (ev.target.id === "f-dom") S.domFilter = ev.target.value;
       drawBinder(game, set, all);
     });
-    $("#quick").onclick = (ev) => {
-      S.quick = !S.quick;
-      ev.currentTarget.setAttribute("aria-pressed", String(S.quick));
-      $("#quick-note").hidden = !S.quick;
+    const setMode = (quick, selecting) => {
+      S.quick = quick;
+      if (S.selecting !== selecting) S.sel = new Set();
+      S.selecting = selecting;
+      $("#quick").setAttribute("aria-pressed", String(quick));
+      $("#multi").setAttribute("aria-pressed", String(selecting));
+      $("#quick-note").hidden = !quick;
+      $("#multi-note").hidden = !selecting;
+      $("#selbar").hidden = !selecting;
+      view.querySelector(".selbar-space").hidden = !selecting;
+      document.body.classList.toggle("selecting", selecting);
+      drawBinder(game, set, all);
+      updateSelbar();
     };
+    $("#quick").onclick = () => setMode(!S.quick, false);
+    $("#multi").onclick = () => setMode(false, !S.selecting);
+    $("#sel-all").onclick = () => {
+      for (const id of S.visible) S.sel.add(id);
+      drawBinder(game, set, all);
+      updateSelbar();
+    };
+    $("#sel-none").onclick = () => {
+      S.sel.clear();
+      drawBinder(game, set, all);
+      updateSelbar();
+    };
+    $("#selbar").addEventListener("click", (ev) => {
+      const b = ev.target.closest("[data-bulk]");
+      if (!b || !S.sel.size) return;
+      const cards = all.filter((c) => S.sel.has(c.id));
+      openBulk(b.dataset.bulk, game, set, cards, all);
+    });
+    updateSelbar();
     $("#add-custom").onclick = () => openCustomForm(game, set);
     drawBinder(game, set, all);
     bindPress($("#binder"), game, set);
@@ -583,6 +691,7 @@
       if (q && !norm(`${c.name} ${c.no}`).includes(q)) return false;
       return true;
     });
+    S.visible = list.map((c) => c.id);
     const box = $("#binder");
     if (!list.length) {
       box.innerHTML = `<div class="empty" style="grid-column:1/-1"><strong>Aucune carte</strong>${
@@ -596,7 +705,8 @@
   function pocketHTML(game, c) {
     const e = entry(game, c.id);
     const qty = ownedQty(e);
-    return `<button type="button" class="pocket ${qty ? "" : "missing"}" data-card="${esc(c.id)}" aria-label="${esc(c.name)} ${esc(c.no)}${qty ? `, ${qty} possédée(s)` : ", manquante"}">
+    const picked = S.selecting && S.sel.has(c.id);
+    return `<button type="button" class="pocket ${qty ? "" : "missing"} ${picked ? "picked" : ""}" data-card="${esc(c.id)}" ${S.selecting ? `aria-pressed="${picked}"` : ""} aria-label="${esc(c.name)} ${esc(c.no)}${qty ? `, ${qty} possédée(s)` : ", manquante"}">
       <span class="art">${c.img ? `<img src="${esc(c.img)}" alt="" loading="lazy" decoding="async" onerror="this.remove()">` : ""}<span class="ph">${c.img ? "" : esc(c.name)}</span>
         ${qty ? `<span class="badge">${qty}</span>` : ""}
         ${e?.wish ? `<span class="star">${ICON.star}</span>` : ""}
@@ -655,6 +765,14 @@
       }
       const card = cardFor(el);
       if (!card) return;
+      if (S.selecting) {
+        if (S.sel.has(card.id)) S.sel.delete(card.id);
+        else S.sel.add(card.id);
+        el.classList.toggle("picked", S.sel.has(card.id));
+        el.setAttribute("aria-pressed", String(S.sel.has(card.id)));
+        updateSelbar();
+        return;
+      }
       if (S.quick && !card.custom) {
         const e = quickAdd(game, card, set);
         const fresh = updatePocket(game, card.id);
@@ -665,6 +783,148 @@
         openSheet(game, { ...card, setId: set.id, setName: set.name });
       }
     });
+  }
+
+  function updateSelbar() {
+    const count = $("#sel-count");
+    if (!count) return;
+    const n = S.sel.size;
+    count.textContent = n ? `${plural(n, "carte")} sélectionnée${n > 1 ? "s" : ""}` : "Aucune carte sélectionnée";
+    for (const b of document.querySelectorAll("[data-bulk]")) b.disabled = !n;
+  }
+
+  function showSheet() {
+    backdrop.hidden = false;
+    sheetEl.hidden = false;
+    sheetEl.scrollTop = 0;
+    document.documentElement.style.overflow = "hidden";
+  }
+  function hideSheet() {
+    S.sheet = null;
+    sheetEl.hidden = true;
+    backdrop.hidden = true;
+    document.documentElement.style.overflow = "";
+  }
+
+  function thumbsHTML(cards) {
+    const shown = cards.slice(0, 14);
+    return `<div class="thumbs">${shown
+      .map((c) => (c.img ? `<img src="${esc(c.img)}" alt="${esc(c.name)}" loading="lazy" onerror="this.remove()">` : `<span title="${esc(c.name)}"></span>`))
+      .join("")}${cards.length > shown.length ? `<span class="more-n">+${cards.length - shown.length}</span>` : ""}</div>`;
+  }
+
+  // Actions groupées sur les cartes sélectionnées : ajouter, wishlist, classeur.
+  function openBulk(kind, game, set, cards, all) {
+    const g = GAMES[game];
+    const d = defaults(game);
+    const n = cards.length;
+    S.sheet = { game, card: { id: "__bulk" } };
+    const head = (title) => `<div class="grabber"></div>
+      <button type="button" class="close" id="sheet-close" aria-label="Fermer">${ICON.close}</button>
+      <h3 class="sheet-title">${title}</h3>
+      ${thumbsHTML(cards)}`;
+    if (kind === "add") {
+      sheetEl.innerHTML = `${head(`Ajouter ${plural(n, "carte")} à ma collection`)}
+        <div class="copy">
+          <label>Langue<select id="bk-lang">${options(g.langs, d.lang)}</select></label>
+          <label>Version<select id="bk-ver">${options(g.versions, d.ver)}</select></label>
+          <label>État<select id="bk-cond">${options(CONDITIONS, d.cond)}</select></label>
+          <div class="foot"><span class="sub" style="color:var(--muted);font-size:13px">Exemplaires par carte</span>
+            <div class="stepper" style="margin-left:auto"><button type="button" id="bk-minus" aria-label="Retirer un">−</button><output id="bk-qty">1</output><button type="button" id="bk-plus" aria-label="Ajouter un">+</button></div>
+          </div>
+        </div>
+        <button type="button" class="btn primary" id="bk-go" style="width:100%">Ajouter ${plural(n, "carte")}</button>
+        <p class="note">Si tu as déjà un exemplaire identique d'une carte, sa quantité augmente.</p>`;
+      let qty = 1;
+      $("#bk-minus").onclick = () => ($("#bk-qty").textContent = qty = Math.max(1, qty - 1));
+      $("#bk-plus").onclick = () => ($("#bk-qty").textContent = qty = Math.min(99, qty + 1));
+      $("#bk-go").onclick = () => {
+        const opt = { lang: $("#bk-lang").value, ver: $("#bk-ver").value, cond: $("#bk-cond").value };
+        for (const c of cards) {
+          const e = ensureEntry(game, c, set);
+          const same = e.copies.find((x) => x.lang === opt.lang && x.ver === opt.ver && x.cond === opt.cond);
+          if (same) same.qty += qty;
+          else e.copies.push({ ...opt, qty, price: null });
+        }
+        finishBulk(game, set, all, `${plural(n, "carte")} ajoutée${n > 1 ? "s" : ""} à ta collection`);
+      };
+    } else if (kind === "wish") {
+      let prio = 2;
+      sheetEl.innerHTML = `${head(`Mettre ${plural(n, "carte")} en wishlist`)}
+        <p class="label" style="margin-top:4px">Priorité</p>
+        <div class="seg seg3" id="bk-prio">
+          <button type="button" data-w="1" aria-pressed="false">Basse</button>
+          <button type="button" data-w="2" aria-pressed="true">Moyenne</button>
+          <button type="button" class="p3" data-w="3" aria-pressed="false">Haute</button>
+        </div>
+        <label class="maxp">Prix max par carte (facultatif)<span><input id="bk-max" type="text" inputmode="decimal" autocomplete="off" placeholder="—"> €</span></label>
+        <button type="button" class="btn primary" id="bk-go" style="width:100%;margin-top:14px">Mettre en wishlist</button>`;
+      $("#bk-prio").addEventListener("click", (ev) => {
+        const b = ev.target.closest("[data-w]");
+        if (!b) return;
+        prio = +b.dataset.w;
+        for (const x of document.querySelectorAll("#bk-prio [data-w]")) x.setAttribute("aria-pressed", String(x === b));
+      });
+      $("#bk-go").onclick = () => {
+        const max = parsePrice($("#bk-max").value);
+        for (const c of cards) {
+          const e = ensureEntry(game, c, set);
+          e.wish = prio;
+          if (max != null) e.maxPrice = max;
+        }
+        finishBulk(game, set, all, `${plural(n, "carte")} en wishlist (priorité ${PRIOS[prio].toLowerCase()})`);
+      };
+    } else {
+      const list = bindersOf(game);
+      sheetEl.innerHTML = `${head(`Ranger ${plural(n, "carte")} dans un classeur`)}
+        ${
+          list.length
+            ? `<div class="binder-pick" id="bk-binders">${list
+                .map((b) => `<button type="button" class="btn" data-b="${esc(b.id)}">« ${esc(b.name)} » <span class="sub" style="color:var(--muted);font-weight:500">· ${plural(b.slots.filter(Boolean).length, "carte")}</span></button>`)
+                .join("")}</div>`
+            : `<p class="note" style="margin-top:0">Tu n'as pas encore de classeur ${esc(g.label)}. Crée-le ici :</p>`
+        }
+        <form class="new-binder" id="bk-new">
+          <input id="bk-name" class="search" placeholder="Nouveau classeur" autocomplete="off" maxlength="40">
+          <button type="submit" class="btn primary">Créer et ranger</button>
+        </form>
+        <p class="note">Les cartes vont dans les premières poches libres. Des pages sont ajoutées si besoin.</p>`;
+      const put = (b) => {
+        let added = 0;
+        for (const c of cards) {
+          const k = keyOf(game, c.id);
+          if (b.slots.includes(k)) continue;
+          ensureEntry(game, c, set);
+          addToBinder(b, k);
+          added++;
+        }
+        finishBulk(game, set, all, added ? `${plural(added, "carte")} rangée${added > 1 ? "s" : ""} dans « ${b.name} »` : `Déjà toutes dans « ${b.name} »`);
+      };
+      $("#bk-binders")?.addEventListener("click", (ev) => {
+        const btn = ev.target.closest("[data-b]");
+        if (btn) put(S.col.binders.find((x) => x.id === btn.dataset.b));
+      });
+      $("#bk-new").addEventListener("submit", (ev) => {
+        ev.preventDefault();
+        const name = $("#bk-name").value.trim();
+        if (!name) return $("#bk-name").focus();
+        const b = { id: `b-${Date.now().toString(36)}`, game, name, slots: Array(SLOTS).fill(null), created: Date.now() };
+        S.col.binders.push(b);
+        put(b);
+      });
+    }
+    $("#sheet-close").onclick = closeSheet;
+    showSheet();
+  }
+
+  function finishBulk(game, set, all, message) {
+    save();
+    hideSheet();
+    S.sel.clear();
+    drawBinder(game, set, all);
+    updateSetSub(game, set);
+    updateSelbar();
+    toast(message);
   }
 
   function updateSetSub(game, set) {
@@ -681,20 +941,20 @@
   function openSheet(game, card) {
     S.sheet = { game, card };
     drawSheet();
-    backdrop.hidden = false;
-    sheetEl.hidden = false;
-    document.documentElement.style.overflow = "hidden";
+    showSheet();
   }
   function closeSheet() {
     if (!S.sheet) return;
     const { game, card } = S.sheet;
+    if (card.id.startsWith("__")) {
+      // panneaux sans carte (sélection groupée, carte hors base, choix pour un classeur)
+      hideSheet();
+      return;
+    }
     const e = entry(game, card.id);
     if (e) cleanup(e);
     save();
-    S.sheet = null;
-    sheetEl.hidden = true;
-    backdrop.hidden = true;
-    document.documentElement.style.overflow = "";
+    hideSheet();
     if (S.tab === "sets" && S.route[game]?.setId) {
       if (!updatePocket(game, card.id)) refreshKeepingScroll();
       const set = cat(game).setData.get(S.route[game].setId);
@@ -707,6 +967,127 @@
   document.addEventListener("keydown", (ev) => {
     if (ev.key === "Escape" && S.sheet) closeSheet();
   });
+
+  // Visuel en grand : un appui ou un glissement vers le bas le ferme.
+  function openViewer(src, alt) {
+    const v = document.createElement("div");
+    v.className = "viewer";
+    v.setAttribute("role", "dialog");
+    v.setAttribute("aria-label", alt || "Carte");
+    v.innerHTML = `<img alt="${esc(alt)}"><p class="viewer-hint">Touche ou glisse vers le bas pour fermer</p>`;
+    const img = v.querySelector("img");
+    const big = bigImage(src);
+    img.onerror = () => {
+      if (img.getAttribute("src") !== src) img.src = src;
+    };
+    img.src = big;
+    document.body.appendChild(v);
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      v.classList.add("out");
+      document.removeEventListener("keydown", onKey);
+      setTimeout(() => v.remove(), 170);
+    };
+    const onKey = (ev) => {
+      if (ev.key === "Escape") {
+        ev.stopPropagation();
+        close();
+      }
+    };
+    document.addEventListener("keydown", onKey, true);
+    let y0 = null;
+    let dy = 0;
+    v.addEventListener("touchstart", (ev) => {
+      y0 = ev.touches[0].clientY;
+      dy = 0;
+    }, { passive: true });
+    v.addEventListener("touchmove", (ev) => {
+      if (y0 == null) return;
+      dy = ev.touches[0].clientY - y0;
+      if (dy > 0) {
+        ev.preventDefault();
+        img.style.transform = `translateY(${dy}px)`;
+        v.style.background = `rgb(0 0 0 / ${Math.max(0.3, 0.88 - dy / 600)})`;
+      }
+    }, { passive: false });
+    v.addEventListener("touchend", () => {
+      if (dy > 90) close();
+      else {
+        img.style.transform = "";
+        v.style.background = "";
+      }
+      y0 = null;
+    });
+    v.addEventListener("click", close);
+  }
+
+  // Glisser la fiche vers le bas pour la fermer (quand elle est en haut de son défilement).
+  function resetSheetStyle() {
+    sheetEl.style.transition = "";
+    sheetEl.style.transform = "";
+    backdrop.style.opacity = "";
+    backdrop.style.transition = "";
+  }
+  (function enableSheetDrag() {
+    let startY = 0;
+    let dy = 0;
+    let t0 = 0;
+    let tracking = false;
+    let dragging = false;
+    sheetEl.addEventListener("touchstart", (ev) => {
+      if (sheetEl.hidden || ev.touches.length !== 1) return (tracking = false);
+      if (ev.target.closest("input, select, textarea, .thumbs, .pages")) return (tracking = false);
+      tracking = sheetEl.scrollTop <= 0;
+      dragging = false;
+      startY = ev.touches[0].clientY;
+      dy = 0;
+      t0 = Date.now();
+    }, { passive: true });
+    sheetEl.addEventListener("touchmove", (ev) => {
+      if (!tracking) return;
+      dy = ev.touches[0].clientY - startY;
+      if (!dragging) {
+        if (dy > 8 && sheetEl.scrollTop <= 0) {
+          dragging = true;
+          sheetEl.style.transition = "none";
+          document.activeElement?.blur?.();
+        } else if (dy < -4) {
+          tracking = false;
+          return;
+        } else return;
+      }
+      ev.preventDefault();
+      sheetEl.style.transform = `translateY(${Math.max(0, dy)}px)`;
+      backdrop.style.opacity = String(Math.max(0.15, 1 - dy / 450));
+    }, { passive: false });
+    const end = () => {
+      if (!dragging) {
+        tracking = false;
+        return;
+      }
+      dragging = false;
+      tracking = false;
+      const fast = dy > 45 && Date.now() - t0 < 260;
+      sheetEl.style.transition = "transform .2s ease-out";
+      backdrop.style.transition = "opacity .2s";
+      if (dy > 110 || fast) {
+        sheetEl.style.transform = "translateY(100%)";
+        backdrop.style.opacity = "0";
+        setTimeout(() => {
+          resetSheetStyle();
+          closeSheet();
+        }, 190);
+      } else {
+        sheetEl.style.transform = "";
+        backdrop.style.opacity = "";
+        setTimeout(resetSheetStyle, 210);
+      }
+    };
+    sheetEl.addEventListener("touchend", end);
+    sheetEl.addEventListener("touchcancel", end);
+  })();
 
   function options(list, current) {
     return list
@@ -729,16 +1110,17 @@
       <div class="grabber"></div>
       <button type="button" class="close" id="sheet-close" aria-label="Fermer">${ICON.close}</button>
       <div class="sheet-head">
-        <div class="art">${img ? `<img src="${esc(img)}" alt="${esc(card.name)}">` : ""}</div>
+        <button type="button" class="art" id="zoom-art" ${img ? "" : "disabled"} aria-label="Afficher la carte en grand">${img ? `<img src="${esc(img)}" alt="${esc(card.name)}">` : ""}</button>
         <div style="min-width:0">
           <h3>${esc(card.name)}</h3>
           <div class="facts">
             ${card.no ? `<span>N° <span class="mono">${esc(card.no)}</span></span>` : ""}
-            ${card.rar ? `<span>${esc(card.rar)}</span>` : ""}
+            ${rarityOf(card, game) ? `<span>${esc(rarityOf(card, game))}</span>` : ""}
             ${card.setName ? `<span>${esc(card.setName)}</span>` : ""}
             ${card.custom ? `<span>Carte hors base</span>` : ""}
             <span>${qty ? `<b style="color:var(--owned)">${qty} possédée${qty > 1 ? "s" : ""}</b>` : "Pas encore possédée"}${value ? ` · ${eur(value)}` : ""}</span>
           </div>
+          <a class="btn small cm-link" href="${esc(cardmarketURL(game, card))}" target="_blank" rel="noopener">Voir sur Cardmarket ${ICON.ext}</a>
         </div>
       </div>
 
@@ -771,6 +1153,11 @@
           <button type="button" data-w="2" aria-pressed="${e?.wish === 2}">Moyenne</button>
           <button type="button" class="p3" data-w="3" aria-pressed="${e?.wish === 3}">Haute</button>
         </div>
+        ${
+          e?.wish
+            ? `<label class="maxp">Prix max que je suis prêt à payer<span><input id="wish-max" type="text" inputmode="decimal" autocomplete="off" placeholder="—" value="${e.maxPrice != null ? String(e.maxPrice).replace(".", ",") : ""}"> €</span></label>`
+            : ""
+        }
       </div>
 
       <div class="sheet-section">
@@ -833,10 +1220,20 @@
       if (!b) return;
       const w = +b.dataset.w;
       if (w) ensureEntry(game, card).wish = w;
-      else if (entry(game, card.id)) entry(game, card.id).wish = 0;
+      else if (entry(game, card.id)) {
+        entry(game, card.id).wish = 0;
+        entry(game, card.id).maxPrice = null;
+      }
       save();
       drawSheet();
     });
+    $("#wish-max")?.addEventListener("change", (ev) => {
+      const e2 = entry(game, card.id);
+      if (!e2) return;
+      e2.maxPrice = parsePrice(ev.target.value);
+      save();
+    });
+    $("#zoom-art").onclick = () => img && openViewer(img, card.name);
     $("#sheet-binders")?.addEventListener("click", (ev) => {
       const btn = ev.target.closest("[data-b]");
       if (!btn) return;
@@ -1321,7 +1718,7 @@
       const items = wished.filter((e) => e.wish === p).sort((a, b) => a.setName.localeCompare(b.setName) || String(a.no).localeCompare(String(b.no), "en", { numeric: true }));
       if (!items.length) continue;
       html += `<p class="label">Priorité ${PRIOS[p].toLowerCase()} · ${items.length}</p><div class="rows">${items
-        .map((e) => rowHTML(e, `${ownedQty(e) ? `déjà ×${ownedQty(e)}<br>` : ""}<span class="prio p${p}">${PRIOS[p]}</span>`))
+        .map((e) => rowHTML(e, `${ownedQty(e) ? `déjà ×${ownedQty(e)}<br>` : ""}${e.maxPrice ? `max ${money(e.maxPrice)}<br>` : ""}<span class="prio p${p}">${PRIOS[p]}</span>`))
         .join("")}</div>`;
     }
     box.innerHTML = html;
@@ -1343,7 +1740,7 @@
       const items = wished.filter((e) => e.wish === p);
       if (!items.length) continue;
       lines.push("", `${p === 3 ? "🔥" : p === 2 ? "⭐" : "•"} ${PRIOS[p]} :`);
-      for (const e of items) lines.push(`- ${e.name}${e.no ? ` (${e.no})` : ""}${e.setName ? ` — ${e.setName}` : ""}`);
+      for (const e of items) lines.push(`- ${e.name}${e.no ? ` (${e.no})` : ""}${e.setName ? ` — ${e.setName}` : ""}${e.maxPrice ? ` · max ${money(e.maxPrice)}` : ""}`);
     }
     return lines.join("\n");
   }
@@ -1486,6 +1883,20 @@
           ctx.textAlign = "left";
         }
         ctx.restore();
+        if (e.maxPrice) {
+          const label = `max ${money(e.maxPrice)}`;
+          ctx.font = `700 21px ${body}`;
+          const tw = ctx.measureText(label).width;
+          const pw = tw + 22, ph = 34, px = x + cw - pw - 8, py = yy + ch - ph - 8;
+          ctx.fillStyle = "rgba(0,0,0,0.35)";
+          roundRect(ctx, px + 1, py + 2, pw, ph, 17);
+          ctx.fill();
+          ctx.fillStyle = accent;
+          roundRect(ctx, px, py, pw, ph, 17);
+          ctx.fill();
+          ctx.fillStyle = "#11141b";
+          ctx.fillText(label, px + 11, py + 24);
+        }
         ctx.fillStyle = "#ebedf3";
         ctx.font = `600 20px ${body}`;
         ctx.fillText(fitText(ctx, e.name, cw), x, yy + ch + 28);
@@ -1583,6 +1994,12 @@
         <div id="import-confirm" class="card-box" style="margin-top:10px" hidden></div>
       </div>
 
+      <p class="label">À propos</p>
+      <div class="card-box">
+        <p><b>Classeur TCG · version ${APP_VERSION}</b> · ${esc(CHANGELOG[0].date)}${BUILD && !BUILD.includes("__") ? ` <span class="mono" style="font-size:11.5px">(publication ${esc(BUILD)})</span>` : ""}</p>
+        <button type="button" class="btn small" id="show-news">Voir les nouveautés</button>
+      </div>
+
       <p class="label">Partager l'app</p>
       <div class="card-box">
         <p>Envoie ce lien à tes amis : chacun aura sa propre app vide, sans accès à ta collection.</p>
@@ -1606,6 +2023,7 @@
       };
     }
     $("#export").onclick = exportBackup;
+    $("#show-news").onclick = () => showIntro(true);
     $("#copy-app").onclick = async () => {
       try {
         await navigator.clipboard.writeText(APP_URL);
@@ -1714,6 +2132,59 @@
     toastTimer = setTimeout(() => (t.hidden = true), 1800);
   }
 
+  /* ================= Page de garde ================= */
+
+  const LOGO = `<svg viewBox="0 0 120 120" aria-hidden="true">
+    <g class="c1"><rect x="38" y="30" width="44" height="62" rx="6" fill="#7b4fc9"/><rect x="44" y="36" width="32" height="24" rx="3" fill="#4d2f86"/></g>
+    <g class="c2"><rect x="38" y="30" width="44" height="62" rx="6" fill="#d63a2b"/><rect x="44" y="36" width="32" height="24" rx="3" fill="#8f2219"/></g>
+    <g class="c0"><rect x="38" y="30" width="44" height="62" rx="6" fill="#d9b45a"/><rect x="44" y="36" width="32" height="26" rx="3" fill="#11141b"/>
+      <rect x="44" y="68" width="32" height="4" rx="2" fill="#11141b"/><rect x="44" y="76" width="21" height="4" rx="2" fill="#11141b"/></g>
+  </svg>`;
+
+  function showIntro(manual = false) {
+    if (document.getElementById("intro")) return;
+    const fresh = !manual && !S.col.seenVersion && !Object.keys(S.col.cards).length;
+    const [latest, ...older] = CHANGELOG;
+    const el = document.createElement("div");
+    el.className = "intro";
+    el.id = "intro";
+    el.setAttribute("role", "dialog");
+    el.setAttribute("aria-modal", "true");
+    el.setAttribute("aria-label", fresh ? "Bienvenue" : "Nouveautés");
+    el.innerHTML = `<div class="intro-inner">
+      <div class="logo">${LOGO}</div>
+      <h1 class="intro-title">Classeur TCG</h1>
+      <p class="intro-sub">Riftbound · Yu-Gi-Oh · Pokémon</p>
+      ${
+        fresh
+          ? `<div class="intro-card"><p class="label">Bienvenue</p>
+              <ul><li>Choisis ton jeu en haut, ouvre un set et touche une carte pour l'ajouter.</li>
+              <li>« Ajout rapide » et « Sélection » permettent d'en saisir beaucoup d'un coup.</li>
+              <li>Ta collection reste sur ce téléphone : exporte une sauvegarde de temps en temps (Réglages).</li></ul></div>`
+          : ""
+      }
+      <div class="intro-card">
+        <p class="label">${manual || fresh ? "Dernière version" : "Nouveautés"} · version ${esc(latest.v)}</p>
+        <p class="note" style="margin:0">${esc(latest.date)}</p>
+        <ul>${latest.items.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>
+      </div>
+      <details class="intro-older"><summary>Versions précédentes</summary>
+        ${older.map((r) => `<div class="ver"><p class="label">Version ${esc(r.v)} · ${esc(r.date)}</p><ul>${r.items.map((t) => `<li>${esc(t)}</li>`).join("")}</ul></div>`).join("")}
+      </details>
+      <button type="button" class="btn primary intro-go" id="intro-go">${manual ? "Fermer" : "C'est parti"}</button>
+    </div>`;
+    document.body.appendChild(el);
+    document.documentElement.style.overflow = "hidden";
+    el.querySelector("#intro-go").focus({ preventScroll: true });
+    el.querySelector("#intro-go").onclick = () => {
+      S.col.seenVersion = APP_VERSION;
+      save();
+      el.classList.add("out");
+      document.documentElement.style.overflow = S.sheet ? "hidden" : "";
+      setTimeout(() => el.remove(), 210);
+    };
+  }
+
   /* ================= Démarrage ================= */
 
   // iOS garde la page d'accueil en cache jusqu'à 10 min après une publication :
@@ -1743,5 +2214,6 @@
     Store.persist();
     fetchJSON("data/meta.json").then((m) => (meta = m)).catch(() => {});
     setGame(GAMES[S.col.lastGame] ? S.col.lastGame : "riftbound");
+    if (S.col.seenVersion !== APP_VERSION) showIntro();
   })();
 })();
