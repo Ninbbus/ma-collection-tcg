@@ -128,6 +128,7 @@ async function riftcodexCards() {
   if (!cards.length) throw new Error("Riftcodex n'a renvoyé aucune carte");
 
   // Riftcodex renvoie certaines cartes plusieurs fois (constaté sur Vendetta) : une seule par identifiant.
+  globalThis.__codexRaw = cards;
   const unique = new Map();
   for (const c of cards) {
     const k = String(c.riftbound_id || c.id).toLowerCase();
@@ -186,6 +187,7 @@ async function riotGalleryCards() {
     return null;
   };
   const raw = find(data.props || data);
+  globalThis.__riotRaw = raw;
   if (!raw?.length) throw new Error("galerie Riot : liste de cartes introuvable");
 
   return raw.map((c) => {
@@ -221,6 +223,42 @@ async function riftbound() {
   const b = riot.status === "fulfilled" ? riot.value : [];
   console.log(`  Riftcodex : ${a.length} cartes, galerie Riot : ${b.length} cartes`);
   if (!a.length && !b.length) throw new Error("aucune source Riftbound disponible");
+
+  // ---- DIAGNOSTIC TEMPORAIRE ----
+  if (process.env.GITHUB_ACTIONS) {
+    const enc = (t) => String(t).slice(0, 3800).replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+    const note = (title, body) => console.log(`::notice title=${title}::${enc(body)}`);
+    const cr = globalThis.__codexRaw || [];
+    const rr = globalThis.__riotRaw || [];
+    if (cr[0]) note("D1 codex champs", JSON.stringify(cr[0]).slice(0, 3000));
+    const ven = cr.filter((c) => /ven|vendetta/i.test(`${c.set?.set_id} ${c.set?.label}`));
+    const groups = new Map();
+    for (const c of ven) {
+      const k = String(c.riftbound_id || c.id).toLowerCase();
+      groups.set(k, [...(groups.get(k) || []), c]);
+    }
+    const dup = [...groups.entries()].filter(([, l]) => l.length > 1);
+    const strip = (c) => {
+      const o = { ...c };
+      delete o.text; delete o.description; delete o.attributes;
+      if (o.media) o.media = { img: String(o.media.image_url || "").slice(-40) };
+      return JSON.stringify(o).slice(0, 420);
+    };
+    note(`D2 codex VEN ${ven.length} entrées, ${groups.size} ids, ${dup.length} ids multiples`, dup.slice(0, 4).map(([k, l]) => `${k}:\n` + l.map(strip).join("\n")).join("\n---\n"));
+    const meta = (c) => JSON.stringify(c.metadata || {});
+    const venOdd = ven.filter((c) => /signature|overnumbered|alternate/.test(meta(c)) && /true/.test(meta(c)));
+    note(`D3 codex VEN variantes ${venOdd.length}`, venOdd.slice(0, 30).map((c) => `${c.riftbound_id} | n=${c.collector_number} | ${c.name} | ${meta(c)} | ${c.classification?.rarity}`).join("\n"));
+    for (const code of ["VEN", "RAD"]) {
+      const xs = rr.filter((c) => String(c.publicCode || "").toUpperCase().startsWith(code + "-"));
+      const star = xs.filter((c) => String(c.publicCode).includes("*"));
+      const letter = xs.filter((c) => /^[A-Z]+-\d+[a-z]/i.test(String(c.publicCode)));
+      const totals = {};
+      for (const c of xs) { const t = String(c.publicCode).split("/")[1]; totals[t] = (totals[t] || 0) + 1; }
+      note(`D4 riot ${code} ${xs.length} cartes, ${star.length} signées, ${letter.length} alt`, `totaux: ${JSON.stringify(totals)}\n` + xs.filter((c) => (c.collectorNumber || 0) > 160 || String(c.publicCode).includes("*")).slice(0, 40).map((c) => `${c.id} | ${c.publicCode} | n=${c.collectorNumber} | ${c.name} | ${c.rarity?.value?.label} | keys:${Object.keys(c).join(",").slice(0, 200)}`).join("\n"));
+    }
+    const radAny = rr.filter((c) => /RAD/i.test(String(c.publicCode)) && (c.collectorNumber || 0) > 200);
+    if (radAny[0]) note("D5 riot RAD exemple complet", JSON.stringify(radAny[radAny.length - 1]).slice(0, 3000));
+  }
 
   // Riftcodex reste la base (identifiants inchangés pour les collections existantes) ;
   // la galerie Riot ajoute ce qui manque, en particulier les sets récents.
