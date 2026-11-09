@@ -699,3 +699,58 @@ body.selecting .toast { bottom: calc(var(--tabbar-h) + env(safe-area-inset-botto
 .intro-older .ver { margin-top: 12px; color: var(--muted); font-size: 14px; }
 .intro-older .ver .label { margin: 0; }
 .intro-go { width: 100%; padding: 14px; font-size: 16px; margin-top: 4px; }
+
+/* ---------- v1.5 ---------- */
+.gear {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  padding: 0;
+}
+.gear svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.gear[aria-current="page"] { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+.topbar-inner { gap: 10px; }
+@media (max-width: 420px) {
+  .games button { padding: 6px 9px; font-size: 12.5px; }
+  .brand { font-size: 17px; }
+}
+@media (max-width: 370px) {
+  .games button { padding: 6px 7px; font-size: 11.5px; }
+  .brand { font-size: 15px; }
+}
+
+/* Binder 4 × 3 : pages en paysage */
+.pages.wide { max-width: 640px; }
+.page.l43 { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; padding: 10px 10px 10px 16px; }
+.slot.deco { border-color: transparent; }
+.slot.deco img { width: 100%; height: 100%; object-fit: cover; }
+.deco-btn { display: block; text-align: center; margin-bottom: 4px; }
+.seg.seg2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.nb-layout { flex: 0 0 auto; width: auto; min-width: 0; max-width: 46%; }
+@media (max-width: 480px) {
+  .new-binder:has(.nb-layout) { flex-wrap: wrap; }
+  .new-binder:has(.nb-layout) .search:first-child { flex: 1 1 100%; }
+  .new-binder:has(.nb-layout) .nb-layout { flex: 1 1 auto; max-width: none; }
+}
+
+/* Accueil : résumé par jeu */
+.home-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.home-stat { text-align: left; border-top: 3px solid var(--game); cursor: pointer; }
+.home-stat .g { display: block; font: 600 11px/1.2 var(--font-display); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+.home-stat span:last-child { font-size: 11.5px; }
+
+/* Priorités sur 5 niveaux */
+.seg.seg3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.seg button.p5[aria-pressed="true"] { background: var(--wish); color: #fff; }
+.seg button.p4[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.prio.p5 { background: var(--wish); color: #fff; }
+.prio.p4 { background: var(--accent); color: var(--accent-ink); }
+.prio.p3 { background: var(--accent-soft); color: var(--fg); }
+.prio.p2 { background: var(--surface-2); color: var(--muted); }
+.prio.p1 { background: transparent; color: var(--muted); box-shadow: inset 0 0 0 1px var(--line); }

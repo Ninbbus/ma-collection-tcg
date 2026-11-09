@@ -1,4 +1,4 @@
-// Classeur TCG : suivi de collection Riftbound, Yu-Gi-Oh et Pokémon.
+// Binder : suivi de collection Riftbound, Yu-Gi-Oh et Pokémon.
 (function () {
   "use strict";
 
@@ -33,7 +33,18 @@
     ["PL", "Played"],
     ["PO", "Poor"],
   ];
-  const PRIOS = { 3: "Haute", 2: "Moyenne", 1: "Basse" };
+  const PRIOS = { 5: "Indispensable", 4: "Haute", 3: "Moyenne", 2: "Basse", 1: "Un jour" };
+  const PRIO_ORDER = [5, 4, 3, 2, 1];
+  // Ancienne échelle (1 basse, 2 moyenne, 3 haute) vers la nouvelle (1 un jour … 5 indispensable).
+  function migrateWish(col) {
+    if (!col || col.wishScale === 5) return;
+    for (const e of Object.values(col.cards || {})) if (e.wish > 0) e.wish = Math.min(5, e.wish + 1);
+    col.wishScale = 5;
+  }
+  const prioSeg = (current, withNone) =>
+    `${withNone ? `<button type="button" data-w="0" aria-pressed="${!current}">Non</button>` : ""}${[1, 2, 3, 4, 5]
+      .map((p) => `<button type="button" class="p${p}" data-w="${p}" aria-pressed="${current === p}">${PRIOS[p]}</button>`)
+      .join("")}`;
   // Ordre des raretés, de la plus haute à la plus basse.
   const RARITIES = {
     riftbound: ["Showcase signée", "Showcase Overnumber", "Showcase Alt Art", "Showcase", "Epic", "Rare", "Uncommon", "Common"],
@@ -44,10 +55,22 @@
     ],
     pokemon: [],
   };
-  const SLOTS = 12; // cartes par page de classeur
+  const SLOTS = 12; // cartes par page de binder
   const SET_PAGE = 60;
-  const APP_VERSION = "1.4.1";
+  const APP_VERSION = "1.5";
   const CHANGELOG = [
+    {
+      v: "1.5",
+      date: "9 novembre 2026",
+      items: [
+        "Nouvel onglet Accueil : ta vitrine avec des cartes de tous les jeux, et le résumé de tes collections",
+        "Les Classeurs s'appellent maintenant Binders",
+        "Disposition au choix pour chaque binder : 3 × 4 (portrait) ou 4 × 3 (paysage)",
+        "Images décoratives : mets une photo de ta galerie dans une poche de binder",
+        "Wishlist : 5 niveaux de priorité (Un jour → Indispensable) et tri par prix max",
+        "Réglages déplacés dans la roue dentée en haut à droite",
+      ],
+    },
     {
       v: "1.4.1",
       date: "7 novembre 2026",
@@ -61,7 +84,7 @@
       v: "1.4",
       date: "7 novembre 2026",
       items: [
-        "Multi-sélection dans un set : ajoute, mets en wishlist ou range dans un classeur plusieurs cartes d'un coup",
+        "Multi-sélection dans un set : ajoute, mets en wishlist ou range dans un binder plusieurs cartes d'un coup",
         "Prix max dans la wishlist, affiché sur l'image partagée",
         "Lien Cardmarket sur chaque fiche carte",
         "Glisse la fiche d'une carte vers le bas pour la fermer",
@@ -80,7 +103,7 @@
         "Lien de l'app à partager dans Réglages",
       ],
     },
-    { v: "1.2", date: "3 novembre 2026", items: ["Classeurs vitrine avec pages de 12 cartes", "Collection classée par set ou par rareté", "Mise à jour automatique à l'ouverture"] },
+    { v: "1.2", date: "3 novembre 2026", items: ["Binders vitrine avec pages de 12 cartes", "Collection classée par set ou par rareté", "Mise à jour automatique à l'ouverture"] },
     { v: "1.1", date: "3 novembre 2026", items: ["Visuels dans les résultats de recherche", "Set Radiance ajouté via la galerie officielle Riot", "Doublons du set Vendetta supprimés"] },
     { v: "1.0", date: "3 novembre 2026", items: ["Première version : Riftbound, Yu-Gi-Oh et Pokémon, collection, wishlist, sauvegarde, cartes hors base"] },
   ];
@@ -91,7 +114,8 @@
 
   const S = {
     game: "riftbound",
-    tab: "sets",
+    tab: "home",
+    wishSort: "prio",
     route: {}, // route par jeu dans l'onglet Sets : { setId } ou {}
     filter: "all",
     quick: false,
@@ -101,14 +125,14 @@
     sheet: null, // carte ouverte
     importData: null,
     colSort: "set",
-    binderOpen: {}, // jeu -> id du classeur ouvert
+    binderOpen: {}, // jeu -> id du binder ouvert
     binderPage: 0,
     binderEdit: false,
     binderSel: null,
     selecting: false, // multi-sélection dans un set
     sel: new Set(),
     visible: [],
-    col: { cards: {}, defaults: {}, binders: [], lastGame: "riftbound" },
+    col: { cards: {}, defaults: {}, binders: [], decos: {}, wishScale: 5, lastGame: "riftbound" },
   };
   const catalog = {}; // game -> { sets, setData: Map, search }
   let meta = null;
@@ -371,13 +395,14 @@
     S.sel = new Set();
     S.tab = tab;
     S.listQuery = "";
-    for (const b of document.querySelectorAll("#tabbar button")) {
+    for (const b of document.querySelectorAll("#tabbar button, #open-settings")) {
       if (b.dataset.tab === tab) b.setAttribute("aria-current", "page");
       else b.removeAttribute("aria-current");
     }
     render();
     window.scrollTo(0, 0);
   }
+  $("#open-settings").addEventListener("click", () => setTab("settings"));
   function openSet(setId) {
     S.route[S.game] = { setId };
     S.selecting = false;
@@ -428,7 +453,7 @@
   function render() {
     document.body.classList.remove("selecting");
     drawBackupBanner();
-    const fn = { sets: renderSetsTab, collection: renderCollection, binders: renderBinders, wishlist: renderWishlist, settings: renderSettings }[S.tab];
+    const fn = { home: renderHome, sets: renderSetsTab, collection: renderCollection, binders: renderBinders, wishlist: renderWishlist, settings: renderSettings }[S.tab];
     fn();
   }
   function refreshKeepingScroll() {
@@ -550,7 +575,7 @@
     }
   });
 
-  /* ================= Vue d'un set (classeur) ================= */
+  /* ================= Vue d'un set (binder) ================= */
 
   async function renderSet(setId) {
     const game = S.game;
@@ -616,7 +641,7 @@
         <div class="selbar-actions">
           <button type="button" class="btn primary" data-bulk="add">Ajouter</button>
           <button type="button" class="btn" data-bulk="wish">Wishlist</button>
-          <button type="button" class="btn" data-bulk="binder">Classeur</button>
+          <button type="button" class="btn" data-bulk="binder">Binder</button>
         </div>
       </div>`;
 
@@ -842,7 +867,7 @@
       .join("")}${cards.length > shown.length ? `<span class="more-n">+${cards.length - shown.length}</span>` : ""}</div>`;
   }
 
-  // Actions groupées sur les cartes sélectionnées : ajouter, wishlist, classeur.
+  // Actions groupées sur les cartes sélectionnées : ajouter, wishlist, binder.
   function openBulk(kind, game, set, cards, all) {
     const g = GAMES[game];
     const d = defaults(game);
@@ -878,13 +903,11 @@
         finishBulk(game, set, all, `${plural(n, "carte")} ajoutée${n > 1 ? "s" : ""} à ta collection`);
       };
     } else if (kind === "wish") {
-      let prio = 2;
+      let prio = 3;
       sheetEl.innerHTML = `${head(`Mettre ${plural(n, "carte")} en wishlist`)}
         <p class="label" style="margin-top:4px">Priorité</p>
         <div class="seg seg3" id="bk-prio">
-          <button type="button" data-w="1" aria-pressed="false">Basse</button>
-          <button type="button" data-w="2" aria-pressed="true">Moyenne</button>
-          <button type="button" class="p3" data-w="3" aria-pressed="false">Haute</button>
+          ${prioSeg(3, false)}
         </div>
         <label class="maxp">Prix max par carte (facultatif)<span><input id="bk-max" type="text" inputmode="decimal" autocomplete="off" placeholder="—"> €</span></label>
         <button type="button" class="btn primary" id="bk-go" style="width:100%;margin-top:14px">Mettre en wishlist</button>`;
@@ -904,17 +927,17 @@
         finishBulk(game, set, all, `${plural(n, "carte")} en wishlist (priorité ${PRIOS[prio].toLowerCase()})`);
       };
     } else {
-      const list = bindersOf(game);
-      sheetEl.innerHTML = `${head(`Ranger ${plural(n, "carte")} dans un classeur`)}
+      const list = bindersFor(game);
+      sheetEl.innerHTML = `${head(`Ranger ${plural(n, "carte")} dans un binder`)}
         ${
           list.length
             ? `<div class="binder-pick" id="bk-binders">${list
                 .map((b) => `<button type="button" class="btn" data-b="${esc(b.id)}">« ${esc(b.name)} » <span class="sub" style="color:var(--muted);font-weight:500">· ${plural(b.slots.filter(Boolean).length, "carte")}</span></button>`)
                 .join("")}</div>`
-            : `<p class="note" style="margin-top:0">Tu n'as pas encore de classeur ${esc(g.label)}. Crée-le ici :</p>`
+            : `<p class="note" style="margin-top:0">Tu n'as pas encore de binder ${esc(g.label)}. Crée-le ici :</p>`
         }
         <form class="new-binder" id="bk-new">
-          <input id="bk-name" class="search" placeholder="Nouveau classeur" autocomplete="off" maxlength="40">
+          <input id="bk-name" class="search" placeholder="Nouveau binder" autocomplete="off" maxlength="40">
           <button type="submit" class="btn primary">Créer et ranger</button>
         </form>
         <p class="note">Les cartes vont dans les premières poches libres. Des pages sont ajoutées si besoin.</p>`;
@@ -976,7 +999,7 @@
     if (!S.sheet) return;
     const { game, card } = S.sheet;
     if (card.id.startsWith("__")) {
-      // panneaux sans carte (sélection groupée, carte hors base, choix pour un classeur)
+      // panneaux sans carte (sélection groupée, carte hors base, choix pour un binder)
       hideSheet();
       return;
     }
@@ -1176,11 +1199,8 @@
 
       <div class="sheet-section">
         <p class="label">Wishlist</p>
-        <div class="seg" id="wish">
-          <button type="button" data-w="0" aria-pressed="${!e?.wish}">Non</button>
-          <button type="button" data-w="1" aria-pressed="${e?.wish === 1}">Basse</button>
-          <button type="button" data-w="2" aria-pressed="${e?.wish === 2}">Moyenne</button>
-          <button type="button" class="p3" data-w="3" aria-pressed="${e?.wish === 3}">Haute</button>
+        <div class="seg seg3" id="wish">
+          ${prioSeg(e?.wish || 0, true)}
         </div>
         ${
           e?.wish
@@ -1190,13 +1210,13 @@
       </div>
 
       <div class="sheet-section">
-        <p class="label">Classeurs</p>
+        <p class="label">Binders</p>
         ${
-          bindersOf(game).length
-            ? `<div class="toolbar" id="sheet-binders" style="margin:0">${bindersOf(game)
+          bindersFor(game).length
+            ? `<div class="toolbar" id="sheet-binders" style="margin:0">${bindersFor(game)
                 .map((b) => `<button type="button" class="chip" data-b="${esc(b.id)}" aria-pressed="${b.slots.includes(keyOf(game, card.id))}">${b.slots.includes(keyOf(game, card.id)) ? "✓ " : "+ "}${esc(b.name)}</button>`)
                 .join("")}</div>`
-            : `<p class="note" style="margin:0">Crée un classeur dans l'onglet Classeurs pour y ranger tes plus belles cartes.</p>`
+            : `<p class="note" style="margin:0">Crée un binder dans l'onglet Binders pour y ranger tes plus belles cartes.</p>`
         }
       </div>
 
@@ -1481,7 +1501,40 @@
     bindRows();
   }
 
-  /* ================= Onglet Classeurs ================= */
+  /* ================= Binders (vitrines) ================= */
+
+  // Binder multi-jeux de la page d'accueil, créé à la demande.
+  function homeBinder() {
+    let b = (S.col.binders || []).find((x) => x.id === "home");
+    if (!b) {
+      b = { id: "home", game: "all", name: "Ma vitrine", slots: Array(SLOTS).fill(null), layout: "4x3", created: Date.now() };
+      S.col.binders.unshift(b);
+      save();
+    }
+    return b;
+  }
+  // Binders proposés pour une carte d'un jeu : la vitrine d'accueil puis ceux du jeu.
+  function bindersFor(game) {
+    return [homeBinder(), ...bindersOf(game)];
+  }
+  const isDeco = (k) => typeof k === "string" && k.startsWith("deco:");
+  const decoSrc = (k) => (S.col.decos || {})[k.slice(5)] || "";
+  const cardSlots = (b) => b.slots.filter((k) => k && !isDeco(k));
+  function purgeDecos() {
+    const used = new Set();
+    for (const b of S.col.binders) for (const k of b.slots) if (isDeco(k)) used.add(k.slice(5));
+    for (const id of Object.keys(S.col.decos || {})) if (!used.has(id)) delete S.col.decos[id];
+  }
+  function coverOf(b) {
+    for (const k of b.slots) {
+      if (!k) continue;
+      if (isDeco(k)) {
+        if (decoSrc(k)) return decoSrc(k);
+      } else if (S.col.cards[k]?.img) return S.col.cards[k].img;
+    }
+    return "";
+  }
+  const LAYOUTS = { "3x4": "3 × 4 (portrait)", "4x3": "4 × 3 (paysage)" };
 
   function renderBinders() {
     const game = S.game;
@@ -1489,24 +1542,25 @@
     if (open) return renderBinder(open);
     const list = bindersOf(game);
     view.innerHTML = `
-      <div class="view-head"><h2>Classeurs</h2></div>
+      <div class="view-head"><h2>Binders</h2></div>
       ${
         list.length
           ? `<div class="binder-list">${list
               .map((b) => {
-                const filled = b.slots.filter(Boolean);
-                const cover = filled.map((k) => S.col.cards[k]).find((e) => e?.img);
+                const n = cardSlots(b).length;
+                const cover = coverOf(b);
                 return `<button type="button" class="binder-tile" data-open="${esc(b.id)}">
-                  <span class="cover">${cover ? `<img src="${esc(cover.img)}" alt="" loading="lazy" onerror="this.remove()">` : ""}</span>
+                  <span class="cover">${cover ? `<img src="${esc(cover)}" alt="" loading="lazy" onerror="this.remove()">` : ""}</span>
                   <span class="t1">${esc(b.name)}</span>
-                  <span class="t2">${filled.length} carte${filled.length > 1 ? "s" : ""} · ${b.slots.length / SLOTS} page${b.slots.length > SLOTS ? "s" : ""}</span>
+                  <span class="t2">${plural(n, "carte")} · ${plural(b.slots.length / SLOTS, "page")} · ${b.layout === "4x3" ? "4 × 3" : "3 × 4"}</span>
                 </button>`;
               })
               .join("")}</div>`
-          : `<div class="empty"><strong>Aucun classeur ${esc(GAMES[game].label)}</strong>Un classeur est une vitrine pour tes plus belles cartes, avec des pages de 12 poches. Crée le premier ci-dessous.</div>`
+          : `<div class="empty"><strong>Aucun binder ${esc(GAMES[game].label)}</strong>Un binder est une vitrine pour tes plus belles cartes, avec des pages de 12 poches. Crée le premier ci-dessous. Pour mélanger les jeux, utilise ta vitrine sur l'Accueil.</div>`
       }
       <form class="new-binder" id="new-binder">
-        <input id="nb-name" class="search" placeholder="Nom du nouveau classeur" autocomplete="off" maxlength="40">
+        <input id="nb-name" class="search" placeholder="Nom du nouveau binder" autocomplete="off" maxlength="40">
+        <select id="nb-layout" class="search nb-layout" aria-label="Disposition">${Object.entries(LAYOUTS).map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select>
         <button type="submit" class="btn primary">Créer</button>
       </form>`;
     view.querySelectorAll("[data-open]").forEach((el) => {
@@ -1523,20 +1577,23 @@
       ev.preventDefault();
       const name = $("#nb-name").value.trim();
       if (!name) return $("#nb-name").focus();
-      const b = { id: `b-${Date.now().toString(36)}`, game, name, slots: Array(SLOTS).fill(null), created: Date.now() };
+      const b = { id: `b-${Date.now().toString(36)}`, game, name, slots: Array(SLOTS).fill(null), layout: $("#nb-layout").value, created: Date.now() };
       S.col.binders.push(b);
       save();
       S.binderOpen[game] = b.id;
       S.binderPage = 0;
       render();
-      toast("Classeur créé");
+      toast("Binder créé");
     });
   }
 
   function slotHTML(b, i) {
     const k = b.slots[i];
-    const e = k && S.col.cards[k];
     const sel = S.binderEdit && S.binderSel === i;
+    if (isDeco(k) && decoSrc(k)) {
+      return `<button type="button" class="slot deco ${sel ? "sel" : ""}" data-slot="${i}" aria-label="Image décorative"><img src="${esc(decoSrc(k))}" alt="" decoding="async"></button>`;
+    }
+    const e = k && !isDeco(k) && S.col.cards[k];
     if (!e) {
       return `<button type="button" class="slot empty ${sel ? "sel" : ""}" data-slot="${i}" aria-label="Poche vide ${(i % SLOTS) + 1}"><span>+</span></button>`;
     }
@@ -1546,27 +1603,45 @@
     </button>`;
   }
 
+  function renderHome() {
+    renderBinder(homeBinder());
+  }
+
+  function homeStatsHTML() {
+    return `<p class="label">Mes collections</p><div class="home-stats">${Object.entries(GAMES)
+      .map(([g, info]) => {
+        const list = gameEntries(g);
+        const owned = list.filter((e) => ownedQty(e) > 0).length;
+        const wish = list.filter((e) => e.wish > 0).length;
+        return `<button type="button" class="stat home-stat" data-goto="${g}" style="--game:${{ riftbound: "#d9b45a", yugioh: "#a985f0", pokemon: "#ff6a55" }[g]}">
+          <span class="g">${esc(info.label)}</span><b>${owned}</b><span>${owned > 1 ? "cartes" : "carte"} · ${wish} en wishlist</span></button>`;
+      })
+      .join("")}</div>`;
+  }
+
   function renderBinder(b) {
+    const home = b.id === "home";
     const game = S.game;
     const pages = b.slots.length / SLOTS;
     if (S.binderPage >= pages) S.binderPage = pages - 1;
-    const filled = b.slots.filter(Boolean).length;
+    const n = cardSlots(b).length;
     const lastEmpty = pages > 1 && b.slots.slice(-SLOTS).every((x) => !x);
+    const layout = b.layout === "4x3" ? "4x3" : "3x4";
     view.innerHTML = `
-      <div class="view-head"><button type="button" class="back" id="back" aria-label="Retour aux classeurs">${ICON.back}</button>
-        <div style="min-width:0"><h2>${esc(b.name)}</h2><div class="sub">${filled} carte${filled > 1 ? "s" : ""} · ${pages} page${pages > 1 ? "s" : ""}</div></div>
+      <div class="view-head">${home ? "" : `<button type="button" class="back" id="back" aria-label="Retour aux binders">${ICON.back}</button>`}
+        <div style="min-width:0"><h2>${esc(b.name)}</h2><div class="sub">${home ? "Tous les jeux · " : ""}${plural(n, "carte")} · ${plural(pages, "page")}</div></div>
         <span class="spacer"></span>
         <button type="button" class="chip quick" id="b-edit" aria-pressed="${S.binderEdit}">${S.binderEdit ? "Terminer" : "Modifier"}</button>
       </div>
       <p class="note" id="b-hint">${
         S.binderEdit
           ? S.binderSel != null
-            ? "Touche une autre poche pour y déplacer la carte (échange si elle est occupée)."
-            : "Touche une carte pour la sélectionner, puis une autre poche pour la déplacer."
-          : "Touche une poche vide pour y ranger une carte. Glisse pour tourner les pages."
+            ? "Touche une autre poche pour y déplacer l'élément (échange si elle est occupée)."
+            : "Touche une carte ou une image pour la sélectionner, puis une autre poche pour la déplacer."
+          : `Touche une poche vide pour y ranger une carte${home ? " de n'importe quel jeu" : ""} ou une image. Glisse pour tourner les pages.`
       }</p>
-      <div class="pages" id="pages">${Array.from({ length: pages }, (_, p) =>
-        `<section class="page" aria-label="Page ${p + 1}">${Array.from({ length: SLOTS }, (_, j) => slotHTML(b, p * SLOTS + j)).join("")}</section>`
+      <div class="pages ${layout === "4x3" ? "wide" : ""}" id="pages">${Array.from({ length: pages }, (_, p) =>
+        `<section class="page ${layout === "4x3" ? "l43" : ""}" aria-label="Page ${p + 1}">${Array.from({ length: SLOTS }, (_, j) => slotHTML(b, p * SLOTS + j)).join("")}</section>`
       ).join("")}</div>
       <div class="page-nav">
         <button type="button" class="back" id="pg-prev" aria-label="Page précédente">${ICON.back}</button>
@@ -1574,24 +1649,32 @@
         <button type="button" class="back" id="pg-next" aria-label="Page suivante" style="transform:scaleX(-1)">${ICON.back}</button>
       </div>
       <div class="btn-row" id="b-sel-actions" ${S.binderEdit && S.binderSel != null ? "" : "hidden"} style="justify-content:center;margin-top:10px">
-        <button type="button" class="btn danger" id="b-remove">Retirer du classeur</button>
+        <button type="button" class="btn danger" id="b-remove">Retirer du binder</button>
         <button type="button" class="btn" id="b-cancel">Annuler la sélection</button>
       </div>
-      <p class="label">Gérer le classeur</p>
-      <div class="btn-row">
+      ${home ? homeStatsHTML() : ""}
+      <p class="label">Gérer ${home ? "la vitrine" : "le binder"}</p>
+      <div class="seg seg2" id="b-layout" role="group" aria-label="Disposition des pages">
+        ${Object.entries(LAYOUTS).map(([v, l]) => `<button type="button" data-layout="${v}" aria-pressed="${layout === v}">${l}</button>`).join("")}
+      </div>
+      <div class="btn-row" style="margin-top:10px">
         <button type="button" class="btn small" id="b-addpage">+ Ajouter une page</button>
         ${lastEmpty ? `<button type="button" class="btn small" id="b-delpage">Supprimer la dernière page</button>` : ""}
         <button type="button" class="btn small" id="b-rename">Renommer</button>
-        <button type="button" class="btn small danger" id="b-delete">Supprimer</button>
+        ${home ? "" : `<button type="button" class="btn small danger" id="b-delete">Supprimer</button>`}
       </div>
       <form class="new-binder" id="b-rename-form" hidden style="margin-top:10px">
         <input id="b-rename-input" class="search" value="${esc(b.name)}" maxlength="40" autocomplete="off">
         <button type="submit" class="btn primary">OK</button>
       </form>
-      <div class="card-box" id="b-delete-confirm" hidden style="margin-top:10px">
-        <p>Supprimer le classeur « ${esc(b.name)} » ? Les cartes restent dans ta collection.</p>
+      ${
+        home
+          ? ""
+          : `<div class="card-box" id="b-delete-confirm" hidden style="margin-top:10px">
+        <p>Supprimer le binder « ${esc(b.name)} » ? Les cartes restent dans ta collection.</p>
         <div class="btn-row"><button type="button" class="btn danger" id="b-delete-yes">Supprimer</button><button type="button" class="btn" id="b-delete-no">Annuler</button></div>
-      </div>`;
+      </div>`
+      }`;
 
     const pagesEl = $("#pages");
     const goTo = (p, smooth = true) => {
@@ -1610,12 +1693,12 @@
     });
     $("#pg-prev").onclick = () => goTo(S.binderPage - 1);
     $("#pg-next").onclick = () => goTo(S.binderPage + 1);
-    $("#back").onclick = () => {
+    $("#back")?.addEventListener("click", () => {
       S.binderOpen[game] = null;
       S.binderEdit = false;
       S.binderSel = null;
       render();
-    };
+    });
     $("#b-edit").onclick = () => {
       S.binderEdit = !S.binderEdit;
       S.binderSel = null;
@@ -1638,6 +1721,7 @@
         }
         return renderBinder(b);
       }
+      if (isDeco(k) && decoSrc(k)) return openViewer(decoSrc(k), "Image décorative");
       if (k && S.col.cards[k]) {
         const e = S.col.cards[k];
         openSheet(e.game, cardFromEntry(e));
@@ -1645,13 +1729,29 @@
         openPicker(b, i);
       }
     });
+    $("#home-goto")?.remove();
+    view.querySelectorAll("[data-goto]").forEach((el) => {
+      el.onclick = () => {
+        setGame(el.dataset.goto);
+        setTab("collection");
+      };
+    });
+    $("#b-layout").addEventListener("click", (ev) => {
+      const btn = ev.target.closest("[data-layout]");
+      if (!btn || btn.dataset.layout === layout) return;
+      b.layout = btn.dataset.layout;
+      save();
+      renderBinder(b);
+    });
     $("#b-remove").onclick = () => {
+      const wasDeco = isDeco(b.slots[S.binderSel]);
       b.slots[S.binderSel] = null;
       S.binderSel = null;
+      purgeDecos();
       for (const e of Object.values(S.col.cards)) cleanup(e);
       save();
       renderBinder(b);
-      toast("Carte retirée du classeur");
+      toast(wasDeco ? "Image retirée" : "Carte retirée du binder");
     };
     $("#b-cancel").onclick = () => {
       S.binderSel = null;
@@ -1680,66 +1780,121 @@
       save();
       renderBinder(b);
     });
-    $("#b-delete").onclick = () => ($("#b-delete-confirm").hidden = false);
-    $("#b-delete-no").onclick = () => ($("#b-delete-confirm").hidden = true);
-    $("#b-delete-yes").onclick = () => {
-      S.col.binders = S.col.binders.filter((x) => x !== b);
-      for (const e of Object.values(S.col.cards)) cleanup(e);
-      save();
-      S.binderOpen[game] = null;
-      render();
-      toast("Classeur supprimé");
-    };
+    if (!home) {
+      $("#b-delete").onclick = () => ($("#b-delete-confirm").hidden = false);
+      $("#b-delete-no").onclick = () => ($("#b-delete-confirm").hidden = true);
+      $("#b-delete-yes").onclick = () => {
+        S.col.binders = S.col.binders.filter((x) => x !== b);
+        purgeDecos();
+        for (const e of Object.values(S.col.cards)) cleanup(e);
+        save();
+        S.binderOpen[game] = null;
+        render();
+        toast("Binder supprimé");
+      };
+    }
   }
 
-  // Choisir une carte de sa collection pour une poche vide.
+  // Image de la galerie recadrée au format carte (63 × 88) et compressée.
+  function cropToCard(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        const W = 378, H = 528;
+        const canvas = document.createElement("canvas");
+        canvas.width = W;
+        canvas.height = H;
+        const r = Math.max(W / img.naturalWidth, H / img.naturalHeight);
+        const dw = img.naturalWidth * r, dh = img.naturalHeight * r;
+        canvas.getContext("2d").drawImage(img, (W - dw) / 2, (H - dh) / 2, dw, dh);
+        URL.revokeObjectURL(url);
+        resolve(canvas.toDataURL("image/jpeg", 0.8));
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error("image"));
+      };
+      img.src = url;
+    });
+  }
+
+  // Choisir une carte (ou une image) pour une poche vide.
   function openPicker(b, slot) {
-    const game = b.game;
-    S.sheet = { game, card: { id: "__picker" } };
+    const multi = b.game === "all";
+    let gameFilter = multi ? "" : b.game;
+    S.sheet = { game: multi ? S.game : b.game, card: { id: "__picker" } };
     sheetEl.innerHTML = `
       <div class="grabber"></div>
       <button type="button" class="close" id="sheet-close" aria-label="Fermer">${ICON.close}</button>
-      <h3 style="font:700 20px/1.2 var(--font-display);margin:2px 0 4px">Ranger une carte</h3>
-      <p class="note" style="margin:0 0 12px">Page ${Math.floor(slot / SLOTS) + 1}, poche ${(slot % SLOTS) + 1}. Cartes de ta collection et de ta wishlist.</p>
+      <h3 class="sheet-title">Remplir la poche</h3>
+      <p class="note" style="margin:0 0 12px">Page ${Math.floor(slot / SLOTS) + 1}, poche ${(slot % SLOTS) + 1}.</p>
+      <label class="btn deco-btn" for="pk-photo">Mettre une image décorative</label>
+      <input id="pk-photo" type="file" accept="image/*" hidden>
+      <p class="label">Ou une carte de ta collection ou de ta wishlist</p>
+      ${
+        multi
+          ? `<div class="toolbar" id="pk-games" style="margin:0 0 8px"><button type="button" class="chip" data-g="" aria-pressed="true">Tous</button>${Object.entries(GAMES)
+              .map(([g, i]) => `<button type="button" class="chip" data-g="${g}" aria-pressed="false">${esc(i.label)}</button>`)
+              .join("")}</div>`
+          : ""
+      }
       <input id="pk-search" class="search" type="search" placeholder="Chercher une carte…" autocomplete="off">
       <div class="rows" id="pk-list" style="margin-top:10px"></div>`;
-    backdrop.hidden = false;
-    sheetEl.hidden = false;
-    document.documentElement.style.overflow = "hidden";
-    const close = () => {
-      S.sheet = null;
-      sheetEl.hidden = true;
-      backdrop.hidden = true;
-      document.documentElement.style.overflow = "";
-    };
-    $("#sheet-close").onclick = close;
-    const all = gameEntries(game)
-      .filter((e) => ownedQty(e) > 0 || e.wish || e.custom)
-      .sort((x, y) => rarityRank(game, rarityOf(x)) - rarityRank(game, rarityOf(y)) || x.name.localeCompare(y.name));
+    showSheet();
+    $("#sheet-close").onclick = hideSheet;
+    const pool = Object.values(S.col.cards)
+      .filter((e) => (multi || e.game === b.game) && (ownedQty(e) > 0 || e.wish || e.custom))
+      .sort((x, y) => rarityRank(x.game, rarityOf(x)) - rarityRank(y.game, rarityOf(y)) || x.name.localeCompare(y.name));
     const draw = () => {
       const q = norm($("#pk-search").value.trim());
-      const list = all.filter((e) => !q || norm(`${e.name} ${e.no} ${e.setName}`).includes(q)).slice(0, 80);
+      const list = pool.filter((e) => (!gameFilter || e.game === gameFilter) && (!q || norm(`${e.name} ${e.no} ${e.setName}`).includes(q))).slice(0, 80);
       $("#pk-list").innerHTML = list.length
         ? list
             .map((e) => {
               const k = keyOf(e.game, e.id);
               const here = b.slots.includes(k);
-              return rowHTML(e, `${here ? "déjà dedans" : ownedQty(e) ? `×${ownedQty(e)}` : "wishlist"}<br>${esc(rarityOf(e))}`).replace('data-entry=', 'data-pick=');
+              const tag = multi ? `${esc(GAMES[e.game].label)}<br>` : "";
+              return rowHTML(e, `${tag}${here ? "déjà dedans" : ownedQty(e) ? `×${ownedQty(e)}` : "wishlist"}<br>${esc(rarityOf(e))}`).replace("data-entry=", "data-pick=");
             })
             .join("")
         : `<div class="empty"><strong>Aucune carte</strong>Ajoute d'abord des cartes à ta collection depuis l'onglet Sets.</div>`;
     };
     draw();
     $("#pk-search").addEventListener("input", draw);
+    $("#pk-games")?.addEventListener("click", (ev) => {
+      const c = ev.target.closest("[data-g]");
+      if (!c) return;
+      gameFilter = c.dataset.g;
+      for (const x of document.querySelectorAll("#pk-games [data-g]")) x.setAttribute("aria-pressed", String(x === c));
+      draw();
+    });
+    $("#pk-photo").addEventListener("change", async (ev) => {
+      const file = ev.target.files[0];
+      if (!file) return;
+      try {
+        const data = await cropToCard(file);
+        const id = Date.now().toString(36);
+        S.col.decos = S.col.decos || {};
+        S.col.decos[id] = data;
+        b.slots[slot] = `deco:${id}`;
+        save();
+        hideSheet();
+        renderBinder(b);
+        toast("Image ajoutée");
+      } catch {
+        toast("Image illisible, essaie une autre photo");
+      }
+    });
     $("#pk-list").addEventListener("click", (ev) => {
       const el = ev.target.closest("[data-pick]");
       if (!el) return;
       const k = el.dataset.pick;
       const old = b.slots.indexOf(k);
-      if (old >= 0) b.slots[old] = null; // une carte n'occupe qu'une poche par classeur
+      if (old >= 0) b.slots[old] = null; // une carte n'occupe qu'une poche par binder
       b.slots[slot] = k;
       save();
-      close();
+      hideSheet();
       renderBinder(b);
     });
   }
@@ -1751,15 +1906,34 @@
     const wished = gameEntries(game).filter((e) => e.wish > 0);
     view.innerHTML = `
       <div class="view-head"><h2>Wishlist</h2></div>
-      ${wished.length ? `<div class="btn-row" style="margin:-4px 0 6px"><button type="button" class="btn primary" id="share-wish">Partager ma wishlist</button><button type="button" class="btn" id="copy-wish">Copier en texte</button></div>` : ""}
+      ${
+        wished.length
+          ? `<div class="btn-row" style="margin:-4px 0 6px"><button type="button" class="btn primary" id="share-wish">Partager ma wishlist</button><button type="button" class="btn" id="copy-wish">Copier en texte</button></div>
+             <div class="toolbar" id="wish-sort"><span class="sub" style="color:var(--muted);font-size:13px">Trier par</span>
+               <button type="button" class="chip" data-ws="prio" aria-pressed="${S.wishSort !== "price"}">Priorité</button>
+               <button type="button" class="chip" data-ws="price" aria-pressed="${S.wishSort === "price"}">Prix max</button></div>`
+          : ""
+      }
       <div id="wish-list"></div>`;
+    $("#wish-sort")?.addEventListener("click", (ev) => {
+      const c = ev.target.closest("[data-ws]");
+      if (!c) return;
+      S.wishSort = c.dataset.ws;
+      renderWishlist();
+    });
     const box = $("#wish-list");
     if (!wished.length) {
       box.innerHTML = `<div class="empty"><strong>Ta wishlist ${esc(GAMES[game].label)} est vide</strong>Ouvre une carte et choisis une priorité dans « Wishlist ». Dans un set, le filtre « Manquantes » aide à repérer ce qu'il te manque.</div>`;
       return;
     }
     let html = "";
-    for (const p of [3, 2, 1]) {
+    const endOf = (e) => `${ownedQty(e) ? `déjà ×${ownedQty(e)}<br>` : ""}${e.maxPrice ? `max ${money(e.maxPrice)}<br>` : ""}<span class="prio p${e.wish}">${PRIOS[e.wish]}</span>`;
+    if (S.wishSort === "price") {
+      const items = [...wished].sort((a, b) => (b.maxPrice ?? -1) - (a.maxPrice ?? -1) || b.wish - a.wish || a.name.localeCompare(b.name));
+      const priced = items.filter((e) => e.maxPrice).length;
+      html = `<p class="label">${plural(priced, "carte")} avec un prix max${items.length > priced ? ` · ${items.length - priced} sans prix à la fin` : ""}</p><div class="rows">${items.map((e) => rowHTML(e, endOf(e))).join("")}</div>`;
+    }
+    for (const p of S.wishSort === "price" ? [] : PRIO_ORDER) {
       const items = wished.filter((e) => e.wish === p).sort((a, b) => a.setName.localeCompare(b.setName) || String(a.no).localeCompare(String(b.no), "en", { numeric: true }));
       if (!items.length) continue;
       html += `<p class="label">Priorité ${PRIOS[p].toLowerCase()} · ${items.length}</p><div class="rows">${items
@@ -1781,10 +1955,10 @@
 
   function wishText(game, wished) {
     const lines = [`🃏 Ma wishlist ${GAMES[game].label}`];
-    for (const p of [3, 2, 1]) {
+    for (const p of PRIO_ORDER) {
       const items = wished.filter((e) => e.wish === p);
       if (!items.length) continue;
-      lines.push("", `${p === 3 ? "🔥" : p === 2 ? "⭐" : "•"} ${PRIOS[p]} :`);
+      lines.push("", `${p === 5 ? "🔥" : p === 4 ? "⭐" : "•"} ${PRIOS[p]} :`);
       for (const e of items) lines.push(`- ${e.name}${e.no ? ` (${e.no})` : ""}${e.setName ? ` — ${e.setName}` : ""}${e.maxPrice ? ` · max ${money(e.maxPrice)}` : ""}`);
     }
     return lines.join("\n");
@@ -1839,7 +2013,7 @@
     const ch = cw * (88 / 63);
     const rowH = ch + 64;
     const accent = { riftbound: "#d9b45a", yugioh: "#a985f0", pokemon: "#ff6a55" }[game];
-    const groups = [3, 2, 1]
+    const groups = PRIO_ORDER
       .map((p) => ({ p, items: wished.filter((e) => e.wish === p).sort((a, b) => a.setName.localeCompare(b.setName) || String(a.no).localeCompare(String(b.no), "en", { numeric: true })) }))
       .filter((g) => g.items.length);
     let left = MAX;
@@ -1884,7 +2058,7 @@
     ctx.textAlign = "left";
     y += 120;
 
-    const prioColor = { 3: "#ff6f61", 2: accent, 1: "#9aa1b3" };
+    const prioColor = { 5: "#ff6f61", 4: accent, 3: accent, 2: "#9aa1b3", 1: "#6b7285" };
     for (const g of groups) {
       if (!g.shown.length) continue;
       y += 20;
@@ -1961,7 +2135,7 @@
     ctx.fillStyle = "#5d6475";
     ctx.font = `500 20px ${body}`;
     ctx.textAlign = "right";
-    ctx.fillText("Classeur TCG", W - PAD, H - 26);
+    ctx.fillText("Binder", W - PAD, H - 26);
     return new Promise((res) => c.toBlob(res, "image/png"));
   }
 
@@ -2041,7 +2215,7 @@
 
       <p class="label">À propos</p>
       <div class="card-box">
-        <p><b>Classeur TCG · version ${APP_VERSION}</b> · ${esc(CHANGELOG[0].date)}${BUILD && !BUILD.includes("__") ? ` <span class="mono" style="font-size:11.5px">(publication ${esc(BUILD)})</span>` : ""}</p>
+        <p><b>Binder · version ${APP_VERSION}</b> · ${esc(CHANGELOG[0].date)}${BUILD && !BUILD.includes("__") ? ` <span class="mono" style="font-size:11.5px">(publication ${esc(BUILD)})</span>` : ""}</p>
         <button type="button" class="btn small" id="show-news">Voir les nouveautés</button>
       </div>
 
@@ -2079,7 +2253,7 @@
     };
     $("#share-app").onclick = async () => {
       try {
-        if (navigator.share) await navigator.share({ title: "Classeur TCG", text: "Mon app de suivi de collection Riftbound, Yu-Gi-Oh et Pokémon :", url: APP_URL });
+        if (navigator.share) await navigator.share({ title: "Binder", text: "Mon app de suivi de collection Riftbound, Yu-Gi-Oh et Pokémon :", url: APP_URL });
         else {
           await navigator.clipboard.writeText(APP_URL);
           toast("Lien copié");
@@ -2119,8 +2293,10 @@
   function doImport(replace) {
     const data = S.importData;
     if (!data) return;
-    if (replace) S.col = { cards: {}, defaults: {}, binders: [], lastGame: S.game };
+    if (replace) S.col = { cards: {}, defaults: {}, binders: [], decos: {}, wishScale: 5, lastGame: S.game };
+    migrateWish(data);
     Object.assign(S.col.cards, data.cards || {});
+    S.col.decos = { ...(S.col.decos || {}), ...(data.decos || {}) };
     const known = new Set(S.col.binders.map((b) => b.id));
     for (const b of data.binders || []) if (!known.has(b.id)) S.col.binders.push(b);
     S.col.defaults = { ...S.col.defaults, ...(data.defaults || {}) };
@@ -2147,7 +2323,7 @@
     const file = new File([blob], name, { type: "application/json" });
     try {
       if (navigator.canShare?.({ files: [file] })) {
-        await navigator.share({ files: [file], title: "Sauvegarde Classeur TCG" });
+        await navigator.share({ files: [file], title: "Sauvegarde Binder" });
         markExported();
         return;
       }
@@ -2198,7 +2374,7 @@
     el.setAttribute("aria-label", fresh ? "Bienvenue" : "Nouveautés");
     el.innerHTML = `<div class="intro-inner">
       <div class="logo">${LOGO}</div>
-      <h1 class="intro-title">Classeur TCG</h1>
+      <h1 class="intro-title">Binder</h1>
       <p class="intro-sub">Riftbound · Yu-Gi-Oh · Pokémon</p>
       ${
         fresh
@@ -2256,6 +2432,11 @@
     const saved = await Store.get("collection");
     if (saved && saved.cards) S.col = { cards: {}, defaults: {}, binders: [], ...saved };
     if (!Array.isArray(S.col.binders)) S.col.binders = [];
+    if (!S.col.decos) S.col.decos = {};
+    if (S.col.wishScale !== 5) {
+      migrateWish(S.col);
+      save();
+    }
     Store.persist();
     fetchJSON("data/meta.json").then((m) => (meta = m)).catch(() => {});
     setGame(GAMES[S.col.lastGame] ? S.col.lastGame : "riftbound");
