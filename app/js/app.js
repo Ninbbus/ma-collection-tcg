@@ -57,8 +57,18 @@
   };
   const SLOTS = 12; // cartes par page de binder
   const SET_PAGE = 60;
-  const APP_VERSION = "1.5";
+  const APP_VERSION = "1.6";
   const CHANGELOG = [
+    {
+      v: "1.6",
+      date: "9 novembre 2026",
+      items: [
+        "Reconnaissance par photo : dans Sets, touche « Scanner une carte », prends la carte en photo, l'app lit le code imprimé",
+        "Après le scan : ajout à la collection, wishlist ou Cardmarket en un geste, puis « Scanner la suivante »",
+        "Si la photo ne suffit pas, tape simplement le code (ex. OGN 042/298, LOB-EN001, 025/198)",
+        "Tout se fait sur ton téléphone, aucune photo n'est envoyée en ligne",
+      ],
+    },
     {
       v: "1.5",
       date: "9 novembre 2026",
@@ -178,6 +188,7 @@
     back: '<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>',
     close: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
     trash: '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>',
+    camera: '<svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.6"/></svg>',
     ext: '<svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>',
     star: '<svg viewBox="0 0 24 24"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/></svg>',
   };
@@ -473,7 +484,8 @@
     if (r.setId) return renderSet(r.setId);
     const game = S.game;
     view.innerHTML = `
-      <div class="view-head"><h2>${esc(GAMES[game].label)}</h2></div>
+      <div class="view-head"><h2>${esc(GAMES[game].label)}</h2><span class="spacer"></span>
+        <button type="button" class="btn small scan-btn" data-scan>${ICON.camera}<span>Scanner une carte</span></button></div>
       <input id="set-search" class="search" type="search" placeholder="Chercher un set ou une carte…" autocomplete="off" value="${esc(S.setQuery)}">
       <div id="set-results"><p class="note">Chargement des sets…</p></div>`;
     $("#set-search").addEventListener("input", (ev) => {
@@ -547,7 +559,7 @@
         const pic = e?.img || img;
         return `<button type="button" class="row" data-hit="${esc(id)}" data-hit-set="${esc(setId)}">
           <span class="thumb">${pic ? `<img src="${esc(pic)}" alt="" loading="lazy" onerror="this.remove()">` : ""}</span>
-          <span class="txt"><span class="t1">${esc(name)}</span><span class="t2">${esc(no)} · ${esc(setsById.get(setId)?.name || setId)}</span></span>
+          <span class="txt"><span class="t1">${esc(name)}</span><span class="t2">${esc(no)} · ${esc(setsById.get(setId)?.name || setId)}</span>${Scanner.variantLabel(game, [id]) ? `<span class="t2"><b>${esc(Scanner.variantLabel(game, [id]))}</b></span>` : ""}</span>
           <span class="end">${qty ? `×${qty}` : e?.wish ? `<span class="prio p${e.wish}">${PRIOS[e.wish]}</span>` : ""}</span>
         </button>`;
       })
@@ -615,7 +627,8 @@
     view.innerHTML = `
       <div class="view-head"><button type="button" class="back" id="back" aria-label="Retour aux sets">${ICON.back}</button>
         <div style="min-width:0"><h2>${esc(set.name)}</h2>
-        <div class="sub"><span class="mono">${owned}/${total}</span> possédées · ${pct} %${info?.code ? ` · ${esc(info.code)}` : ""}</div></div></div>
+        <div class="sub"><span class="mono">${owned}/${total}</span> possédées · ${pct} %${info?.code ? ` · ${esc(info.code)}` : ""}</div></div>
+        <span class="spacer"></span><button type="button" class="back scan-icon" data-scan aria-label="Scanner une carte">${ICON.camera}</button></div>
       <input id="card-search" class="search" type="search" placeholder="Filtrer par nom ou numéro…" autocomplete="off" value="${esc(S.listQuery)}">
       <div class="toolbar" id="filters">
         <button type="button" class="chip" data-filter="all" aria-pressed="${S.filter === "all"}">Toutes</button>
@@ -1161,6 +1174,18 @@
     sheetEl.innerHTML = `
       <div class="grabber"></div>
       <button type="button" class="close" id="sheet-close" aria-label="Fermer">${ICON.close}</button>
+      ${
+        S.sheet.scan
+          ? `<div class="scan-banner"><p class="label" style="margin:0 0 8px">Carte reconnue</p>
+              <div class="scan-actions">
+                <button type="button" class="btn primary" id="sc-add">+ Ajouter à ma collection</button>
+                <button type="button" class="btn" id="sc-wish">${e?.wish ? `En wishlist · ${PRIOS[e.wish]}` : "+ Mettre en wishlist"}</button>
+                <a class="btn" href="${esc(cardmarketURL(game, card))}" target="_blank" rel="noopener">Cardmarket ${ICON.ext}</a>
+                <button type="button" class="btn" id="sc-next">${ICON.camera} Scanner la suivante</button>
+              </div>
+              <button type="button" class="linkish" id="sc-back">Ce n'est pas la bonne carte ?</button></div>`
+          : ""
+      }
       <div class="sheet-head">
         <button type="button" class="art" id="zoom-art" ${img ? "" : "disabled"} aria-label="Afficher la carte en grand">${img ? `<img src="${esc(img)}" alt="${esc(card.name)}">` : ""}</button>
         <div style="min-width:0">
@@ -1228,6 +1253,29 @@
           : ""
       }`;
 
+    if (S.sheet.scan) {
+      $("#sc-add").onclick = () => {
+        const set = { id: card.setId, name: card.setName };
+        const en = quickAdd(game, card, set);
+        const d = defaults(game);
+        toast(`Ajoutée (${d.lang} · ${d.ver} · ${d.cond}) : ${ownedQty(en)} exemplaire${ownedQty(en) > 1 ? "s" : ""}`);
+        drawSheet();
+      };
+      $("#sc-wish").onclick = () => {
+        const en = ensureEntry(game, card, { id: card.setId, name: card.setName });
+        if (!en.wish) {
+          en.wish = 3;
+          save();
+          toast("Ajoutée à la wishlist (priorité moyenne)");
+        } else toast(`Déjà en wishlist (${PRIOS[en.wish].toLowerCase()}) : change la priorité plus bas`);
+        drawSheet();
+      };
+      $("#sc-next").onclick = () => {
+        $("#scan-input").click();
+        closeSheet();
+      };
+      $("#sc-back").onclick = () => (lastScan ? showScanResults(lastScan) : startScan());
+    }
     $("#sheet-close").onclick = closeSheet;
     $("#add-copy").onclick = () => {
       const en = ensureEntry(game, card);
@@ -2351,6 +2399,141 @@
     t.hidden = false;
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => (t.hidden = true), 1800);
+  }
+
+  /* ================= Reconnaissance par photo ================= */
+
+  let lastScan = null; // { game, candidates, text, preview }
+  function startScan() {
+    $("#scan-input").click();
+  }
+  document.addEventListener("click", (ev) => {
+    if (ev.target.closest("[data-scan]")) startScan();
+  });
+  $("#scan-input").addEventListener("change", (ev) => {
+    const file = ev.target.files[0];
+    ev.target.value = "";
+    if (file) runScan(file);
+  });
+
+  function scanShell(inner) {
+    sheetEl.innerHTML = `<div class="grabber"></div>
+      <button type="button" class="close" id="sheet-close" aria-label="Fermer">${ICON.close}</button>
+      <h3 class="sheet-title">Scanner une carte ${esc(GAMES[S.sheet.game].label)}</h3>${inner}`;
+    $("#sheet-close").onclick = closeSheet;
+  }
+
+  async function runScan(file) {
+    const game = S.game;
+    if (lastScan?.preview) URL.revokeObjectURL(lastScan.preview);
+    const preview = URL.createObjectURL(file);
+    S.sheet = { game, card: { id: "__scan" } };
+    scanShell(`<div class="scan-progress">
+        <img class="scan-preview" src="${preview}" alt="Photo de la carte">
+        <div style="min-width:0"><p id="scan-status" style="margin:0 0 8px;font-weight:600">Préparation…</p>
+        <div class="bar"><i id="scan-bar" style="width:4%"></i></div>
+        <p class="note" id="scan-hint">La première fois, l'app télécharge son lecteur (environ 7 Mo), ensuite c'est instantané.</p></div>
+      </div>`);
+    showSheet();
+    const status = (t, pct) => {
+      if (S.sheet?.card.id !== "__scan") return;
+      $("#scan-status").textContent = t;
+      if (pct != null) $("#scan-bar").style.width = `${Math.max(4, Math.min(100, pct))}%`;
+    };
+    let zone = 1, zones = 1;
+    try {
+      const [sets, rows] = await Promise.all([loadSets(game), loadSearch(game)]);
+      const result = await Scanner.scan(file, game, { sets, rows }, (m) => {
+        if (m.status === "zone") {
+          zone = m.zone;
+          zones = m.zones;
+          status(zone === 1 ? "Lecture du code imprimé…" : `Lecture d'une zone plus large (${zone}/${zones})…`, ((zone - 1) / zones) * 100);
+        } else if (m.status === "recognizing text") {
+          status(zone === 1 ? "Lecture du code imprimé…" : `Lecture d'une zone plus large (${zone}/${zones})…`, ((zone - 1 + (m.progress || 0)) / zones) * 100);
+        } else if (/load|initializ/i.test(m.status || "")) {
+          status("Chargement du lecteur…", (m.progress || 0) * 30);
+        }
+      });
+      lastScan = { game, preview, ...result };
+      if (S.sheet?.card.id !== "__scan") return; // fermé entre-temps
+      if (result.candidates.length === 1) return pickCandidate(game, result.candidates[0]);
+      showScanResults(lastScan);
+    } catch (e) {
+      console.error(e);
+      lastScan = { game, preview, candidates: [], text: "", error: true };
+      if (S.sheet?.card.id === "__scan") showScanResults(lastScan);
+    }
+  }
+
+  function showScanResults(res) {
+    const game = res.game;
+    S.sheet = { game, card: { id: "__scan" } };
+    const setsById = new Map((cat(game).sets || []).map((x) => [x.id, x]));
+    const list = res.candidates.slice(0, 12);
+    const tips =
+      game === "yugioh"
+        ? "Le code se trouve sous l'illustration, à droite (ex. LOB-EN001)."
+        : game === "pokemon"
+        ? "Le numéro se trouve en bas de la carte (ex. 025/198)."
+        : "Le code se trouve en bas de la carte (ex. OGN · 042/298).";
+    scanShell(`
+      ${res.preview ? `<div class="scan-progress"><img class="scan-preview" src="${res.preview}" alt="Photo de la carte"><div style="min-width:0">` : "<div><div>"}
+        ${
+          res.error
+            ? `<p style="margin:0;font-weight:600">Le lecteur n'a pas pu se charger.</p><p class="note">Vérifie ta connexion : la première utilisation télécharge environ 7 Mo.</p>`
+            : list.length
+            ? `<p style="margin:0;font-weight:600">${list.length} carte${list.length > 1 ? "s possibles" : " possible"}</p><p class="note">Touche la bonne carte.</p>`
+            : `<p style="margin:0;font-weight:600">Code non reconnu</p><p class="note">${tips} Reprends une photo nette, bien éclairée, carte bien droite, ou tape le code.</p>`
+        }
+      </div></div>
+      ${
+        list.length
+          ? `<div class="rows" id="scan-list">${list
+              .map(([id, name, setId, no, img]) => {
+                const e = entry(game, id);
+                return `<button type="button" class="row" data-cand="${esc(id)}" data-cand-set="${esc(setId)}">
+                  <span class="thumb">${img || e?.img ? `<img src="${esc(img || e.img)}" alt="" loading="lazy" onerror="this.remove()">` : ""}</span>
+                  <span class="txt"><span class="t1">${esc(name)}</span><span class="t2">${esc(no)} · ${esc(setsById.get(setId)?.name || setId)}</span>${Scanner.variantLabel(game, [id]) ? `<span class="t2"><b>${esc(Scanner.variantLabel(game, [id]))}</b></span>` : ""}</span>
+                  <span class="end">${ownedQty(e) ? `×${ownedQty(e)}` : ""}</span></button>`;
+              })
+              .join("")}</div>`
+          : ""
+      }
+      <form class="new-binder" id="scan-manual" style="margin-top:14px">
+        <input id="scan-code" class="search" autocomplete="off" autocapitalize="characters" placeholder="${game === "yugioh" ? "Code, ex. LOB-EN001" : game === "pokemon" ? "Numéro, ex. 025/198" : "Code, ex. OGN 042/298"}">
+        <button type="submit" class="btn">Chercher</button>
+      </form>
+      <button type="button" class="btn primary" id="scan-again" style="width:100%;margin-top:10px">${ICON.camera} Reprendre une photo</button>
+      ${res.text ? `<details class="scan-raw"><summary>Texte lu sur la photo</summary><pre>${esc(res.text.slice(0, 1200))}</pre></details>` : ""}`);
+    $("#scan-again").onclick = () => startScan();
+    $("#scan-list")?.addEventListener("click", (ev) => {
+      const b = ev.target.closest("[data-cand]");
+      if (b) pickCandidate(game, [b.dataset.cand, "", b.dataset.candSet]);
+    });
+    $("#scan-manual").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const code = $("#scan-code").value.trim();
+      if (!code) return $("#scan-code").focus();
+      const [sets, rows] = await Promise.all([loadSets(game), loadSearch(game)]);
+      const candidates = Scanner.findCandidates(game, code, { sets, rows });
+      lastScan = { game, preview: res.preview, candidates, text: res.text };
+      if (candidates.length === 1) return pickCandidate(game, candidates[0]);
+      showScanResults(lastScan);
+      if (!candidates.length) toast("Aucune carte avec ce code");
+    });
+  }
+
+  async function pickCandidate(game, row) {
+    try {
+      const set = await loadSet(game, row[2]);
+      const card = set.cards.find((c) => c.id === row[0]);
+      if (!card) throw new Error("carte");
+      S.sheet = { game, card: { ...card, setId: set.id, setName: set.name }, scan: true };
+      drawSheet();
+      showSheet();
+    } catch {
+      toast("Impossible d'ouvrir cette carte");
+    }
   }
 
   /* ================= Page de garde ================= */

@@ -66,7 +66,7 @@ async function writeGame(game, sets) {
   const search = [];
   for (const s of sets) {
     await writeJSON(join(dir, "sets", `${s.id}.json`), { id: s.id, name: s.name, cards: s.cards });
-    index.push({ id: s.id, name: s.name, code: s.code || "", date: s.date || "", group: s.group || "", count: s.cards.length });
+    index.push({ id: s.id, name: s.name, code: s.code || "", date: s.date || "", group: s.group || "", count: s.cards.length, ...(s.official ? { official: s.official } : {}) });
     for (const c of s.cards) search.push([c.id, c.name, s.id, c.no || "", c.img || ""]);
   }
   // Préfixe commun des URL d'images, retiré de chaque ligne pour alléger l'index de recherche.
@@ -375,7 +375,7 @@ async function pokemon() {
       img: c.image ? `${c.image}/low.webp` : "",
     }));
     list.sort((a, b) => a.no.localeCompare(b.no, "en", { numeric: true }));
-    return { id: slug(s.id), name: s.name, code: s.id, date: s.releaseDate || "", group: ref.serie, cards: list };
+    return { id: slug(s.id), name: s.name, code: s.id, date: s.releaseDate || "", group: ref.serie, official: s.cardCount?.official || 0, cards: list };
   });
   const ok = sets.filter((s) => s && s.cards.length);
   ok.sort((a, b) => (b.date || "").localeCompare(a.date || ""));

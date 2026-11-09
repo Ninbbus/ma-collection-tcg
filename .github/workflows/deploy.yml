@@ -33,6 +33,15 @@ jobs:
           # Numéro de version dans les liens CSS/JS : force le téléphone à charger le nouveau code.
           sed -i "s/__BUILD__/${{ github.run_number }}-${{ github.run_attempt }}/g" _site/index.html
 
+      - name: Moteur de lecture des photos (Tesseract.js, servi par l'app)
+        run: |
+          npm install --no-save --no-audit --no-fund tesseract.js@5.1.1 tesseract.js-core@5.1.1 @tesseract.js-data/eng@1.0.0
+          mkdir -p _site/ocr/core _site/ocr/lang
+          cp node_modules/tesseract.js/dist/tesseract.min.js node_modules/tesseract.js/dist/worker.min.js _site/ocr/
+          cp node_modules/tesseract.js-core/tesseract-core-lstm.wasm.js node_modules/tesseract.js-core/tesseract-core-simd-lstm.wasm.js _site/ocr/core/
+          cp node_modules/@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz _site/ocr/lang/
+          ls -la _site/ocr _site/ocr/core _site/ocr/lang
+
       - name: Récupérer les catalogues de cartes
         env:
           PAGES_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
