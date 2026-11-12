@@ -379,6 +379,93 @@ async function pokemon() {
   });
   const ok = sets.filter((s) => s && s.cards.length);
   ok.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  const all = ok.flatMap((s) => s.cards);
+
+  // 1. Détails carte par carte (espèce = n° de Pokédex, rareté, image), mis en cache d'une nuit à l'autre :
+  //    seules les cartes jamais détaillées sont demandées à TCGdex (la première nuit les fait toutes, par tranches).
+  const prev = new Map();
+  try {
+    for (const s of await copyPrevious("pokemon")) for (const c of s.cards || []) prev.set(c.id, c);
+  } catch (e) {
+    console.log(`  Pas de données précédentes Pokémon (${e.message})`);
+  }
+  const todo = [];
+  for (const c of all) {
+    const p = prev.get(c.id);
+    if (p?.dx) {
+      c.dx = 1;
+      if (p.dex) c.dex = p.dex;
+      if (p.rar) c.rar = p.rar;
+      if (!c.img && p.img) c.img = p.img;
+    } else todo.push(c);
+  }
+  const deadline = Date.now() + 40 * 60 * 1000; // au plus 40 min par nuit pour les détails
+  let detailed = 0;
+  await pool(todo, 10, async (c) => {
+    if (Date.now() > deadline) return;
+    const d = await getJSON(`${API}/cards/${encodeURIComponent(c.id)}`, { tries: 2 }).catch(() => null);
+    if (!d) return;
+    c.dx = 1;
+    if (Array.isArray(d.dexId) && d.dexId.length) c.dex = d.dexId;
+    if (d.rarity && d.rarity !== "None") c.rar = d.rarity;
+    if (!c.img && d.image) c.img = `${d.image}/low.webp`;
+    detailed++;
+  });
+
+  // 2. Images manquantes : complément depuis pokemontcg.io (même set retrouvé par nom et date).
+  const missingBefore = all.filter((c) => !c.img).length;
+  let filled = 0;
+  if (missingBefore) {
+    try {
+      const body = await getJSON("https://api.pokemontcg.io/v2/sets?pageSize=250&select=id,name,releaseDate,printedTotal");
+      const key = (n) => norm(n).replace(/pokemon|tcg/g, "");
+      const byName = new Map();
+      const ptcgSets = body?.data || [];
+      for (const x of ptcgSets) {
+        const k = key(x.name);
+        byName.set(k, [...(byName.get(k) || []), x]);
+      }
+      for (const s of ok) {
+        const miss = s.cards.filter((c) => !c.img);
+        if (!miss.length) continue;
+        const cands = byName.get(key(s.name)) || [];
+        const date = (s.date || "").replace(/-/g, "/");
+        const match =
+          cands.find((x) => x.releaseDate === date) ||
+          cands.find((x) => x.printedTotal === s.official) ||
+          (cands.length === 1 ? cands[0] : null) ||
+          // noms différents d'une base à l'autre (« Base Set » / « Base ») : même date et même total
+          ptcgSets.find((x) => x.releaseDate === date && s.official && x.printedTotal === s.official);
+        if (!match) continue;
+        for (const c of miss) {
+          const num = /^\d+$/.test(c.no) ? String(+c.no) : c.no;
+          c.img = `https://images.pokemontcg.io/${match.id}/${num}.png`;
+          filled++;
+        }
+      }
+    } catch (e) {
+      console.log(`  pokemontcg.io indisponible (${e.message})`);
+    }
+  }
+
+  // 3. Noms français des espèces (PokéAPI), également mis en cache.
+  let species = {};
+  try {
+    species = (await getJSON(`${PAGES_URL}/data/pokemon/species.json`, { tries: 1 })) || {};
+  } catch {}
+  const dexes = [...new Set(all.flatMap((c) => c.dex || []))].filter((n) => !species[n]);
+  await pool(dexes, 8, async (n) => {
+    const d = await getJSON(`https://pokeapi.co/api/v2/pokemon-species/${n}`, { tries: 2 }).catch(() => null);
+    const fr = d?.names?.find((x) => x.language?.name === "fr")?.name;
+    if (fr) species[n] = fr;
+  });
+  await writeJSON(join(OUT, "pokemon", "species.json"), species);
+
+  const withDex = all.filter((c) => c.dex).length;
+  const withRar = all.filter((c) => c.rar).length;
+  const pending = all.filter((c) => !c.dx).length;
+  const msg = `${all.length} cartes · ${detailed} détaillées cette nuit${pending ? `, ${pending} restantes pour les prochaines nuits` : ""} · espèce connue : ${withDex} · rareté : ${withRar} · images manquantes : ${missingBefore} (dont ${filled} complétées via pokemontcg.io) · ${Object.keys(species).length} noms d'espèces en français`;
+  console.log(process.env.GITHUB_ACTIONS ? `::notice title=Pokémon::${msg}` : `  ${msg}`);
   return ok;
 }
 
@@ -407,6 +494,10 @@ for (const [game, fn] of Object.entries(games)) {
     }
   }
   const stats = await writeGame(game, sets);
+  if (game === "pokemon" && source !== "live" && PAGES_URL) {
+    const sp = await getJSON(`${PAGES_URL}/data/pokemon/species.json`, { tries: 1 }).catch(() => null);
+    if (sp) await writeJSON(join(OUT, "pokemon", "species.json"), sp);
+  }
   summary.games[game] = { ...stats, source };
   console.log(`✔ ${game} : ${stats.sets} sets, ${stats.cards} cartes (${source}, ${((Date.now() - t0) / 1000).toFixed(1)} s)`);
 }

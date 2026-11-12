@@ -53,12 +53,27 @@
       "Prismatic Secret Rare", "Platinum Secret Rare", "Ultra Secret Rare", "Secret Rare", "Prismatic Ultimate Rare",
       "Ultra Rare", "Premium Gold Rare", "Gold Secret Rare", "Gold Rare", "Super Rare", "Rare", "Short Print", "Common",
     ],
-    pokemon: [],
+    pokemon: [
+      "Hyper rare", "Special illustration rare", "Mega Hyper Rare", "Rare Rainbow", "Rare Secret", "Shiny Ultra Rare", "Ultra Rare",
+      "Rare Ultra", "Illustration rare", "Shiny rare", "Rare Shiny GX", "Rare Shiny", "ACE SPEC Rare", "Radiant Rare", "Amazing Rare",
+      "Double rare", "Rare Holo VMAX", "Rare Holo VSTAR", "Rare Holo V", "Rare Holo GX", "Rare Holo EX", "Rare Holo LV.X", "Rare BREAK",
+      "Rare PRIME", "LEGEND", "Classic Collection", "Full Art Trainer", "Rare Holo", "Holo Rare", "Rare", "Uncommon", "Common", "Promo",
+    ],
   };
   const SLOTS = 12; // cartes par page de binder
   const SET_PAGE = 60;
-  const APP_VERSION = "1.6";
+  const APP_VERSION = "1.7";
   const CHANGELOG = [
+    {
+      v: "1.7",
+      date: "12 novembre 2026",
+      items: [
+        "Pokémon : collection classée par espèce (tous tes Noctali, tous tes Insécateur…), avec les noms en français",
+        "Pokémon : la recherche dans ta collection trouve aussi le nom français de l'espèce",
+        "Pokémon : rareté de chaque carte (tri par rareté) et images manquantes complétées quand c'est possible",
+        "Riftbound : ta collection s'affiche par rareté par défaut ; le choix de classement est mémorisé pour chaque jeu",
+      ],
+    },
     {
       v: "1.6",
       date: "9 novembre 2026",
@@ -134,7 +149,7 @@
     shownSets: SET_PAGE,
     sheet: null, // carte ouverte
     importData: null,
-    colSort: "set",
+    species: null, // n° de Pokédex -> nom français
     binderOpen: {}, // jeu -> id du binder ouvert
     binderPage: 0,
     binderEdit: false,
@@ -235,6 +250,10 @@
           changed = true;
         }
       }
+      if (c.dex && JSON.stringify(e.dex) !== JSON.stringify(c.dex)) {
+        e.dex = c.dex;
+        changed = true;
+      }
     }
     if (changed) save();
     return changed;
@@ -279,6 +298,7 @@
         sig: !!card.sig,
         ovr: !!card.ovr,
         aa: !!card.aa,
+        ...(card.dex ? { dex: card.dex } : {}),
         copies: [],
         wish: 0,
         custom: !!card.custom,
@@ -1476,8 +1496,16 @@
     });
   }
 
+  const colSort = (game) => S.col.colSort?.[game] || (game === "riftbound" ? "rarity" : "set");
+  async function loadSpecies() {
+    if (!S.species) S.species = await fetchJSON("data/pokemon/species.json").catch(() => ({}));
+    return S.species;
+  }
+  const speciesNames = (e) => (e.dex || []).map((d) => S.species?.[d] || "").join(" ");
+
   function renderCollection() {
     const game = S.game;
+    if (game === "pokemon" && !S.species) loadSpecies().then(() => S.tab === "collection" && S.game === "pokemon" && drawCollectionList(gameEntries(game).filter((e) => ownedQty(e) > 0)));
     const owned = gameEntries(game).filter((e) => ownedQty(e) > 0);
     const copies = owned.reduce((n, e) => n + ownedQty(e), 0);
     const value = owned.reduce((n, e) => n + entryValue(e), 0);
@@ -1490,14 +1518,16 @@
       </div>
       <input id="col-search" class="search" type="search" placeholder="Chercher dans ma collection…" autocomplete="off" value="${esc(S.listQuery)}">
       <div class="toolbar" id="col-sort"><span class="sub" style="color:var(--muted);font-size:13px">Classer par</span>
-        <button type="button" class="chip" data-sort="set" aria-pressed="${S.colSort === "set"}">Set</button>
-        <button type="button" class="chip" data-sort="rarity" aria-pressed="${S.colSort === "rarity"}">Rareté</button>
+        <button type="button" class="chip" data-sort="set" aria-pressed="${colSort(game) === "set"}">Set</button>
+        <button type="button" class="chip" data-sort="rarity" aria-pressed="${colSort(game) === "rarity"}">Rareté</button>
+        ${game === "pokemon" ? `<button type="button" class="chip" data-sort="species" aria-pressed="${colSort(game) === "species"}">Espèce</button>` : ""}
       </div>
       <div id="col-list"></div>`;
     $("#col-sort").addEventListener("click", (ev) => {
       const b = ev.target.closest("[data-sort]");
       if (!b) return;
-      S.colSort = b.dataset.sort;
+      S.col.colSort = { ...(S.col.colSort || {}), [game]: b.dataset.sort };
+      save();
       for (const x of document.querySelectorAll("[data-sort]")) x.setAttribute("aria-pressed", String(x === b));
       drawCollectionList(owned);
     });
@@ -1510,8 +1540,9 @@
 
   function drawCollectionList(owned) {
     const q = norm(S.listQuery.trim());
-    const list = owned.filter((e) => !q || norm(`${e.name} ${e.no} ${e.setName}`).includes(q));
+    const list = owned.filter((e) => !q || norm(`${e.name} ${e.no} ${e.setName} ${speciesNames(e)}`).includes(q));
     const box = $("#col-list");
+    if (!box) return;
     if (!owned.length) {
       box.innerHTML = `<div class="empty" style="margin-top:14px"><strong>Ta collection ${esc(GAMES[S.game].label)} est vide</strong>Ouvre un set dans l'onglet Sets, puis touche une carte pour l'ajouter. Active « Ajout rapide » pour en ajouter plusieurs à la suite.</div>`;
       return;
@@ -1520,25 +1551,40 @@
       box.innerHTML = `<div class="empty" style="margin-top:14px"><strong>Aucun résultat</strong>Aucune carte possédée ne correspond.</div>`;
       return;
     }
-    const byRarity = S.colSort === "rarity";
     const game = S.game;
+    const mode = colSort(game);
+    const byRarity = mode === "rarity";
+    const bySpecies = mode === "species" && game === "pokemon";
+    const OTHER = "Dresseurs, énergies et cartes non classées";
     const groups = new Map();
-    for (const e of list) {
-      const k = byRarity ? rarityOf(e) || "Rareté inconnue" : e.setName || "Autres";
+    const add = (k, e) => {
       if (!groups.has(k)) groups.set(k, []);
       groups.get(k).push(e);
+    };
+    for (const e of list) {
+      if (bySpecies) {
+        if (e.dex?.length) for (const d of e.dex) add(d, e);
+        else add(OTHER, e);
+      } else add(byRarity ? rarityOf(e) || "Rareté inconnue" : e.setName || "Autres", e);
     }
     let order = [...groups.keys()];
     if (byRarity) order.sort((a, b) => rarityRank(game, a === "Rareté inconnue" ? "" : a) - rarityRank(game, b === "Rareté inconnue" ? "" : b) || a.localeCompare(b));
-    let html = "";
+    if (bySpecies) order.sort((a, b) => (a === OTHER) - (b === OTHER) || a - b);
+    const label = (k) => (bySpecies && k !== OTHER ? `${S.species?.[k] || "Pokémon"} · n°${k}` : k);
+    let html =
+      bySpecies && !list.some((e) => e.dex?.length)
+        ? `<div class="empty" style="margin:10px 0"><strong>Espèces pas encore disponibles</strong>Le catalogue Pokémon récupère l'espèce de chaque carte pendant les mises à jour nocturnes. Reviens demain : tes cartes seront rangées automatiquement.</div>`
+        : "";
     for (const name of order) {
       const items = groups.get(name);
       items.sort((a, b) =>
-        byRarity
+        bySpecies
+          ? String(b.setDate || "").localeCompare(String(a.setDate || "")) || String(a.setName).localeCompare(String(b.setName)) || String(a.no).localeCompare(String(b.no), "en", { numeric: true })
+          : byRarity
           ? String(a.setName).localeCompare(String(b.setName)) || String(a.no).localeCompare(String(b.no), "en", { numeric: true })
           : String(a.no).localeCompare(String(b.no), "en", { numeric: true })
       );
-      html += `<p class="label">${esc(name)} · ${items.length}</p><div class="rows">${items
+      html += `<p class="label">${esc(label(name))} · ${items.length}</p><div class="rows">${items
         .map((e) => {
           const v = entryValue(e);
           return rowHTML(e, `×${ownedQty(e)}${v ? `<br>${eur(v)}` : ""}`);
@@ -2625,8 +2671,11 @@
     setGame(GAMES[S.col.lastGame] ? S.col.lastGame : "riftbound");
     if (S.col.seenVersion !== APP_VERSION) showIntro();
     // Remet à niveau les fiches Riftbound existantes (raretés et versions corrigées).
-    const rbSets = [...new Set(Object.values(S.col.cards).filter((e) => e.game === "riftbound" && !e.custom && e.setId).map((e) => e.setId))];
-    Promise.all(rbSets.map((id) => loadSet("riftbound", id).catch(() => null))).then(() => {
+    const toSync = (g) => [...new Set(Object.values(S.col.cards).filter((e) => e.game === g && !e.custom && e.setId).map((e) => e.setId))];
+    Promise.all([
+      ...toSync("riftbound").map((id) => loadSet("riftbound", id).catch(() => null)),
+      ...toSync("pokemon").slice(0, 60).map((id) => loadSet("pokemon", id).catch(() => null)),
+    ]).then(() => {
       if (S.tab === "collection" || S.tab === "wishlist") refreshKeepingScroll();
     });
   })();
