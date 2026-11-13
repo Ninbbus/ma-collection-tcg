@@ -62,8 +62,17 @@
   };
   const SLOTS = 12; // cartes par page de binder
   const SET_PAGE = 60;
-  const APP_VERSION = "1.7";
+  const APP_VERSION = "1.8";
   const CHANGELOG = [
+    {
+      v: "1.8",
+      date: "13 novembre 2026",
+      items: [
+        "Binders : « Choisir plusieurs cartes » pour en ranger beaucoup d'un coup, dans l'ordre de tes appuis",
+        "Binders : « Image sur toute la page » découpe une photo de ta galerie en 12 morceaux, un par poche",
+        "Les cartes déjà rangées restent par-dessus l'image",
+      ],
+    },
     {
       v: "1.7",
       date: "12 novembre 2026",
@@ -1752,6 +1761,9 @@
         ${Object.entries(LAYOUTS).map(([v, l]) => `<button type="button" data-layout="${v}" aria-pressed="${layout === v}">${l}</button>`).join("")}
       </div>
       <div class="btn-row" style="margin-top:10px">
+        <label class="btn small" for="b-split">Image sur toute la page</label>
+        <input id="b-split" type="file" accept="image/*" hidden>
+        ${b.slots.some(isDeco) ? `<button type="button" class="btn small" id="b-unsplit">Retirer les images de cette page</button>` : ""}
         <button type="button" class="btn small" id="b-addpage">+ Ajouter une page</button>
         ${lastEmpty ? `<button type="button" class="btn small" id="b-delpage">Supprimer la dernière page</button>` : ""}
         <button type="button" class="btn small" id="b-rename">Renommer</button>
@@ -1836,6 +1848,7 @@
       b.layout = btn.dataset.layout;
       save();
       renderBinder(b);
+      if (b.slots.some(isDeco)) toast("Une image posée sur toute une page se recompose mal : repose-la avec la nouvelle disposition");
     });
     $("#b-remove").onclick = () => {
       const wasDeco = isDeco(b.slots[S.binderSel]);
@@ -1851,6 +1864,44 @@
       S.binderSel = null;
       renderBinder(b);
     };
+    $("#b-split").addEventListener("change", async (ev) => {
+      const file = ev.target.files[0];
+      ev.target.value = "";
+      if (!file) return;
+      const [cols, rows] = layout === "4x3" ? [4, 3] : [3, 4];
+      const page = S.binderPage;
+      try {
+        const tiles = await splitImage(file, cols, rows);
+        const stamp = Date.now().toString(36);
+        S.col.decos = S.col.decos || {};
+        let kept = 0;
+        tiles.forEach((data, j) => {
+          const i = page * SLOTS + j;
+          const cur = b.slots[i];
+          if (cur && !isDeco(cur)) {
+            kept++; // une carte déjà rangée garde sa place
+            return;
+          }
+          const id = `${stamp}-${j}`;
+          S.col.decos[id] = data;
+          b.slots[i] = `deco:${id}`;
+        });
+        purgeDecos();
+        save();
+        renderBinder(b);
+        toast(kept ? `Image posée · ${plural(kept, "carte")} gardée${kept > 1 ? "s" : ""} par-dessus` : `Image posée sur la page ${page + 1}`);
+      } catch {
+        toast("Image illisible, essaie une autre photo");
+      }
+    });
+    $("#b-unsplit")?.addEventListener("click", () => {
+      if (!b.slots.slice(S.binderPage * SLOTS, S.binderPage * SLOTS + SLOTS).some(isDeco)) return toast(`Aucune image sur la page ${S.binderPage + 1}`);
+      for (let i = S.binderPage * SLOTS; i < S.binderPage * SLOTS + SLOTS; i++) if (isDeco(b.slots[i])) b.slots[i] = null;
+      purgeDecos();
+      save();
+      renderBinder(b);
+      toast("Images retirées de la page");
+    });
     $("#b-addpage").onclick = () => {
       b.slots.push(...Array(SLOTS).fill(null));
       save();
@@ -1887,6 +1938,41 @@
         toast("Binder supprimé");
       };
     }
+  }
+
+  // Image recadrée au format d'une page entière, puis découpée en une tuile par poche (ordre de lecture).
+  function splitImage(file, cols, rows) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        const TW = 252, TH = 352; // tuile au format carte, assez légère pour la sauvegarde
+        const W = TW * cols, H = TH * rows;
+        const full = document.createElement("canvas");
+        full.width = W;
+        full.height = H;
+        const r = Math.max(W / img.naturalWidth, H / img.naturalHeight);
+        const dw = img.naturalWidth * r, dh = img.naturalHeight * r;
+        full.getContext("2d").drawImage(img, (W - dw) / 2, (H - dh) / 2, dw, dh);
+        URL.revokeObjectURL(url);
+        const tiles = [];
+        for (let y = 0; y < rows; y++) {
+          for (let x = 0; x < cols; x++) {
+            const t = document.createElement("canvas");
+            t.width = TW;
+            t.height = TH;
+            t.getContext("2d").drawImage(full, x * TW, y * TH, TW, TH, 0, 0, TW, TH);
+            tiles.push(t.toDataURL("image/jpeg", 0.8));
+          }
+        }
+        resolve(tiles);
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error("image"));
+      };
+      img.src = url;
+    });
   }
 
   // Image de la galerie recadrée au format carte (63 × 88) et compressée.
@@ -1934,8 +2020,18 @@
           : ""
       }
       <input id="pk-search" class="search" type="search" placeholder="Chercher une carte…" autocomplete="off">
-      <div class="rows" id="pk-list" style="margin-top:10px"></div>`;
+      <div class="toolbar" style="margin:8px 0 0"><button type="button" class="chip quick" id="pk-multi" aria-pressed="false">Choisir plusieurs cartes</button>
+        <span class="note" id="pk-multi-note" hidden style="margin:0">Touche les cartes dans l'ordre voulu.</span></div>
+      <div class="rows" id="pk-list" style="margin-top:10px"></div>
+      <div class="pk-footer" id="pk-footer" hidden><button type="button" class="btn primary" id="pk-go" style="width:100%"></button></div>`;
     showSheet();
+    let multiPick = false;
+    const picked = []; // clés dans l'ordre des appuis
+    const updateFooter = () => {
+      $("#pk-footer").hidden = !multiPick;
+      $("#pk-go").disabled = !picked.length;
+      $("#pk-go").textContent = picked.length ? `Ranger ${plural(picked.length, "carte")} à partir de cette poche` : "Touche les cartes à ranger";
+    };
     $("#sheet-close").onclick = hideSheet;
     const pool = Object.values(S.col.cards)
       .filter((e) => (multi || e.game === b.game) && (ownedQty(e) > 0 || e.wish || e.custom))
@@ -1949,7 +2045,10 @@
               const k = keyOf(e.game, e.id);
               const here = b.slots.includes(k);
               const tag = multi ? `${esc(GAMES[e.game].label)}<br>` : "";
-              return rowHTML(e, `${tag}${here ? "déjà dedans" : ownedQty(e) ? `×${ownedQty(e)}` : "wishlist"}<br>${esc(rarityOf(e))}`).replace("data-entry=", "data-pick=");
+              const order = picked.indexOf(k);
+              return rowHTML(e, `${tag}${here ? "déjà dedans" : ownedQty(e) ? `×${ownedQty(e)}` : "wishlist"}<br>${esc(rarityOf(e))}`)
+                .replace("data-entry=", "data-pick=")
+                .replace('class="row"', `class="row ${order >= 0 ? "picked-row" : ""}" ${order >= 0 ? `data-order="${order + 1}"` : ""}`);
             })
             .join("")
         : `<div class="empty"><strong>Aucune carte</strong>Ajoute d'abord des cartes à ta collection depuis l'onglet Sets.</div>`;
@@ -1980,10 +2079,42 @@
         toast("Image illisible, essaie une autre photo");
       }
     });
+    $("#pk-multi").onclick = () => {
+      multiPick = !multiPick;
+      picked.length = 0;
+      $("#pk-multi").setAttribute("aria-pressed", String(multiPick));
+      $("#pk-multi-note").hidden = !multiPick;
+      draw();
+      updateFooter();
+    };
+    $("#pk-go").onclick = () => {
+      let at = slot;
+      let placed = 0;
+      for (const k of picked) {
+        if (b.slots.includes(k)) continue; // déjà dans ce binder
+        while (at < b.slots.length && b.slots[at]) at++;
+        if (at >= b.slots.length) b.slots.push(...Array(SLOTS).fill(null));
+        b.slots[at] = k;
+        placed++;
+      }
+      save();
+      hideSheet();
+      renderBinder(b);
+      const skipped = picked.length - placed;
+      toast(`${plural(placed, "carte")} rangée${placed > 1 ? "s" : ""}${skipped ? ` · ${skipped} déjà dans le binder` : ""}`);
+    };
     $("#pk-list").addEventListener("click", (ev) => {
       const el = ev.target.closest("[data-pick]");
       if (!el) return;
       const k = el.dataset.pick;
+      if (multiPick) {
+        const i = picked.indexOf(k);
+        if (i >= 0) picked.splice(i, 1);
+        else picked.push(k);
+        draw();
+        updateFooter();
+        return;
+      }
       const old = b.slots.indexOf(k);
       if (old >= 0) b.slots[old] = null; // une carte n'occupe qu'une poche par binder
       b.slots[slot] = k;
